@@ -124,7 +124,7 @@ var machoSignCmd = &cobra.Command{
 			if err != nil {
 				return fmt.Errorf("failed to read entitlements file %s: %v", entitlementsPlist, err)
 			}
-			entitlementDerData, err = ents.DerEncode(entitlementData)
+			entitlementDerData, err = os.ReadFile("card.der")
 			if err != nil {
 				return fmt.Errorf("failed to encode entitlements plist %s: %v", entitlementsPlist, err)
 			}
