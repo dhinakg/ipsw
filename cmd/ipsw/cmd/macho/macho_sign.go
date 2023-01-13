@@ -34,7 +34,6 @@ import (
 	mcs "github.com/blacktop/go-macho/pkg/codesign"
 	cstypes "github.com/blacktop/go-macho/pkg/codesign/types"
 	"github.com/blacktop/ipsw/internal/codesign"
-	ents "github.com/blacktop/ipsw/internal/codesign/entitlements"
 	"github.com/blacktop/ipsw/internal/magic"
 	"github.com/blacktop/ipsw/internal/utils"
 	"github.com/blacktop/ipsw/pkg/plist"
