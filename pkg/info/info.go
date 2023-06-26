@@ -183,19 +183,25 @@ func (i *Info) String() string {
 		i.Plists.GetOSType(),
 	)
 	if i.Plists.Restore != nil {
-		if len(i.Plists.Restore.SystemRestoreImageFileSystems) > 0 {
-			for file, fsType := range i.Plists.Restore.SystemRestoreImageFileSystems {
-				iStr += fmt.Sprintf("FileSystem     = %s (Type: %s)\n", file, fsType)
-			}
-		} else {
-			if fsDMG, err := i.GetFileSystemOsDmg(); err == nil {
-				iStr += fmt.Sprintf("FileSystem     = %s\n", fsDMG)
-			}
-			if fsDMG, err := i.GetSystemOsDmg(); err == nil {
-				iStr += fmt.Sprintf("SystemOS       = %s\n", fsDMG)
-			}
-			if fsDMG, err := i.GetAppOsDmg(); err == nil {
-				iStr += fmt.Sprintf("AppOS          = %s\n", fsDMG)
+		foundFS := false
+		if fsDMG, err := i.GetFileSystemOsDmg(); err == nil {
+			foundFS = true
+			iStr += fmt.Sprintf("FileSystem     = %s\n", fsDMG)
+		}
+		if fsDMG, err := i.GetSystemOsDmg(); err == nil {
+			iStr += fmt.Sprintf("SystemOS       = %s\n", fsDMG)
+		}
+		if fsDMG, err := i.GetAppOsDmg(); err == nil {
+			iStr += fmt.Sprintf("AppOS          = %s\n", fsDMG)
+		}
+		if ramDisk, err := i.GetRestoreRamDiskDmgs(); err == nil {
+			iStr += fmt.Sprintf("RestoreRamDisk = %s\n", ramDisk)
+		}
+		if !foundFS {
+			if len(i.Plists.Restore.SystemRestoreImageFileSystems) > 0 {
+				for file, fsType := range i.Plists.Restore.SystemRestoreImageFileSystems {
+					iStr += fmt.Sprintf("FileSystem     = %s (Type: %s)\n", file, fsType)
+				}
 			}
 		}
 	}
@@ -243,11 +249,7 @@ func (i *Info) String() string {
 			if len(bls[strings.ToLower(dt.BoardConfig)]) > 0 {
 				iStr += "   - BootLoaders\n"
 				for _, bl := range bls[strings.ToLower(dt.BoardConfig)] {
-					if _, key, err := getApFirmwareKey(dt.ProductType, i.Plists.BuildManifest.ProductBuildVersion, filepath.Base(bl)); err != nil {
-						iStr += fmt.Sprintf("       * %s\n", filepath.Base(bl))
-					} else {
-						iStr += fmt.Sprintf("       * %s 🔑 -> %s\n", filepath.Base(bl), key)
-					}
+					iStr += fmt.Sprintf("       * %s\n", filepath.Base(bl))
 				}
 			}
 		}

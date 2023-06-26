@@ -5,9 +5,6 @@ hide_title: true
 hide_table_of_contents: true
 sidebar_label: objc
 description: Dump Objective-C Optimization Info
-last_update:
-  date: 2023-01-10T12:52:46-07:00
-  author: blacktop
 ---
 ## ipsw dyld objc
 
@@ -31,7 +28,7 @@ ipsw dyld objc <dyld_shared_cache> [flags]
 
 ```
       --color           colorize output
-      --config string   config file (default is $HOME/.ipsw/config.yaml)
+      --config string   config file (default is $HOME/.config/ipsw/config.yaml)
   -V, --verbose         verbose output
 ```
 

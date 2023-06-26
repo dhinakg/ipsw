@@ -1,5 +1,5 @@
 /*
-Copyright © 2018-2022 blacktop
+Copyright © 2018-2023 blacktop
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -54,6 +54,7 @@ func init() {
 // XrefCmd represents the xref command
 var XrefCmd = &cobra.Command{
 	Use:           "xref <dyld_shared_cache> <vaddr>",
+	Aliases:       []string{"x"},
 	Short:         "🚧 [WIP] Find all cross references to an address",
 	Args:          cobra.MinimumNArgs(2),
 	SilenceUsage:  true,
@@ -229,10 +230,12 @@ var XrefCmd = &cobra.Command{
 				}
 				if len(xrefs) > 0 {
 					for addr, sym := range xrefs {
-						fmt.Printf("%#x: %s\n", addr, sym)
+						fmt.Printf("%s: %s\n", colorAddr("%#x", addr), sym)
 					}
 				}
 			}
+
+			img.Free() // free up memory
 		}
 
 		return nil

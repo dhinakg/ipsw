@@ -1,7 +1,7 @@
 //go:build darwin && frida
 
 /*
-Copyright © 2018-2022 blacktop
+Copyright © 2018-2023 blacktop
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -28,7 +28,7 @@ import (
 	"github.com/spf13/viper"
 )
 
-const fridaVersion = "16.0.8"
+const fridaVersion = "16.0.19"
 
 func init() {
 	FridaCmd.PersistentFlags().StringP("udid", "u", "", "Device UniqueDeviceID to connect to")
@@ -36,13 +36,15 @@ func init() {
 
 // FridaCmd represents the frida commands
 var FridaCmd = &cobra.Command{
-	Use:   "frida",
-	Short: "Run Frida commands",
-	Args:  cobra.NoArgs,
+	Use:     "frida",
+	Aliases: []string{"f"},
+	Short:   "Run Frida commands",
+	Args:    cobra.NoArgs,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		viper.BindPFlag("color", cmd.Flags().Lookup("color"))
 		viper.BindPFlag("verbose", cmd.Flags().Lookup("verbose"))
 		viper.BindPFlag("frida.udid", cmd.Flags().Lookup("udid"))
+		viper.BindPFlag("diff-tool", cmd.Flags().Lookup("diff-tool"))
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		cmd.Help()

@@ -1,5 +1,5 @@
 /*
-Copyright © 2022 blacktop
+Copyright © 2018-2023 blacktop
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -24,6 +24,7 @@ package idev
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"math/bits"
 	"os"
@@ -128,7 +129,11 @@ var PcapCmd = &cobra.Command{
 			}
 			return nil
 		}); err != nil {
-			return err
+			if errors.As(err, &ctrlc.ErrorCtrlC{}) {
+				log.Warn("Exiting...")
+			} else {
+				return err
+			}
 		}
 
 		return nil

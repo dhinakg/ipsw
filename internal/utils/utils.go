@@ -3,7 +3,6 @@ package utils
 import (
 	"archive/tar"
 	"archive/zip"
-	"bytes"
 	"compress/gzip"
 	"crypto/sha1"
 	"fmt"
@@ -12,11 +11,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
-	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/apex/log"
 	"github.com/apex/log/handlers/cli"
@@ -30,43 +26,20 @@ func init() {
 	rand.Seed(time.Now().Unix())
 }
 
-type stop struct {
-	error
-}
-
-func Retry(attempts int, sleep time.Duration, f func() error) error {
-	if err := f(); err != nil {
-		if s, ok := err.(stop); ok {
-			// Return the original error for later checking
-			return s.error
-		}
-
-		if attempts--; attempts > 0 {
-			jitter := time.Duration(rand.Int63n(int64(sleep)))
-			sleep = sleep + jitter/2
-
+// Retry will retry a function f a number of attempts with a sleep duration in between
+func Retry(attempts int, sleep time.Duration, f func() error) (err error) {
+	for i := 0; i < attempts; i++ {
+		if i > 0 {
+			Indent(log.Debug, 2)(fmt.Sprintf("retrying after error: %s", err))
 			time.Sleep(sleep)
-			return Retry(attempts, 2*sleep, f)
+			sleep *= 2
 		}
-		return fmt.Errorf("after %d attempts, %v", attempts, err)
-	}
-
-	return nil
-}
-
-// ConvertStrToInt converts an input string to uint64
-func ConvertStrToInt(intStr string) (uint64, error) {
-	intStr = strings.ToLower(intStr)
-
-	if strings.ContainsAny(strings.ToLower(intStr), "xabcdef") {
-		intStr = strings.Replace(intStr, "0x", "", -1)
-		intStr = strings.Replace(intStr, "x", "", -1)
-		if out, err := strconv.ParseUint(intStr, 16, 64); err == nil {
-			return out, err
+		err = f()
+		if err == nil {
+			return nil
 		}
-		log.Warn("assuming given integer is in decimal")
 	}
-	return strconv.ParseUint(intStr, 10, 64)
+	return fmt.Errorf("after %d attempts, last error: %s", attempts, err)
 }
 
 func RandomAgent() string {
@@ -88,92 +61,6 @@ func Indent(f func(s string), level int) func(string) {
 		f(s)
 		cli.Default.Padding = normalPadding
 	}
-}
-
-func getFmtStr() string {
-	if runtime.GOOS == "windows" {
-		return "%s"
-	}
-	return "\033[1m%s\033[0m"
-}
-
-// Pad creates left padding for printf members
-func Pad(length int) string {
-	if length > 0 {
-		return strings.Repeat(" ", length)
-	}
-	return " "
-}
-
-// StrSliceContains returns true if string slice contains given string
-func StrSliceContains(slice []string, item string) bool {
-	for _, s := range slice {
-		if strings.Contains(strings.ToLower(s), strings.ToLower(item)) {
-			return true
-		}
-	}
-	return false
-}
-
-// StrContainsStrSliceItem returns true if given string contains any item in the string slice
-func StrContainsStrSliceItem(item string, slice []string) bool {
-	for _, s := range slice {
-		if strings.Contains(strings.ToLower(item), strings.ToLower(s)) {
-			return true
-		}
-	}
-	return false
-}
-
-// StrSliceHas returns true if string slice has an exact given string
-func StrSliceHas(slice []string, item string) bool {
-	for _, s := range slice {
-		if strings.EqualFold(strings.ToLower(item), strings.ToLower(s)) {
-			return true
-		}
-	}
-	return false
-}
-
-// FilterStrSlice removes all the strings that do NOT contain the filter from a string slice
-func FilterStrSlice(slice []string, filter string) []string {
-	var filtered []string
-	for _, s := range slice {
-		if strings.Contains(strings.ToLower(s), strings.ToLower(filter)) {
-			filtered = append(filtered, s)
-		}
-	}
-	return filtered
-}
-
-// FilterStrFromSlice removes all the strings that contain the filter from a string slice
-func FilterStrFromSlice(slice []string, filter string) []string {
-	var filtered []string
-	for _, s := range slice {
-		if !strings.Contains(strings.ToLower(s), strings.ToLower(filter)) {
-			filtered = append(filtered, s)
-		}
-	}
-	return filtered
-}
-
-// TrimPrefixStrSlice trims the prefix from all strings in string slice
-func TrimPrefixStrSlice(slice []string, prefix string) []string {
-	var trimmed []string
-	for _, s := range slice {
-		trimmed = append(trimmed, strings.TrimPrefix(s, prefix))
-	}
-	return trimmed
-}
-
-// RemoveStrFromSlice removes a single string from a string slice
-func RemoveStrFromSlice(s []string, r string) []string {
-	for i, v := range s {
-		if v == r {
-			return append(s[:i], s[i+1:]...)
-		}
-	}
-	return s
 }
 
 // Uint64SliceContains returns true if uint64 slice contains given uint64
@@ -236,6 +123,28 @@ func Zip[T, U any](ts []T, us []U) ([]Pair[T, U], error) {
 	return pairs, nil
 }
 
+func Reverse[T any](input []T) {
+	for i, j := 0, len(input)-1; i < j; i, j = i+1, j-1 {
+		input[i], input[j] = input[j], input[i]
+	}
+}
+
+func Difference[T comparable](l1 []T, l2 []T) (diff []T) {
+	m := make(map[T]bool)
+
+	for _, item := range l2 {
+		m[item] = true
+	}
+
+	for _, item := range l1 {
+		if _, ok := m[item]; !ok {
+			diff = append(diff, item)
+		}
+	}
+
+	return
+}
+
 // ReverseBytes reverse byte array order
 func ReverseBytes(a []byte) []byte {
 	for i := len(a)/2 - 1; i >= 0; i-- {
@@ -270,80 +179,93 @@ func Verify(sha1sum, name string) (bool, error) {
 	return match, nil
 }
 
-// RemoteUnzip unzips a remote file from zip (like partialzip)
-func RemoteUnzip(files []*zip.File, pattern *regexp.Regexp, folder string, flat bool) error {
+// SearchZip searches for files in a zip.Reader
+func SearchZip(files []*zip.File, pattern *regexp.Regexp, folder string, flat, progress bool) ([]string, error) {
 	var fname string
+	var artifacts []string
 
 	cwd, err := os.Getwd()
 	if err != nil {
-		return fmt.Errorf("failed to get current working directory: %v", err)
+		return nil, fmt.Errorf("failed to get current working directory: %v", err)
 	}
 
 	found := false
 	for _, f := range files {
 		if pattern.MatchString(f.Name) {
+			if f.FileInfo().IsDir() {
+				continue
+			}
 			found = true
 			if flat {
 				fname = filepath.Join(folder, filepath.Base(f.Name))
 			} else {
 				fname = filepath.Join(folder, filepath.Clean(f.Name))
-				if err := os.MkdirAll(filepath.Dir(fname), 0750); err != nil {
-					return fmt.Errorf("failed to create directory %s: %v", filepath.Dir(fname), err)
-				}
-				if f.FileInfo().IsDir() {
-					continue
-				}
 			}
+
+			if err := os.MkdirAll(filepath.Dir(fname), 0750); err != nil {
+				return nil, fmt.Errorf("failed to create directory %s: %v", filepath.Dir(fname), err)
+			}
+
+			var r io.ReadCloser
 			if _, err := os.Stat(fname); os.IsNotExist(err) {
 				rc, err := f.Open()
 				if err != nil {
-					return fmt.Errorf("error opening remote zipped file %s: %v", f.Name, err)
+					return nil, fmt.Errorf("error opening remote zipped file %s: %v", f.Name, err)
 				}
 				defer rc.Close()
 
-				// setup progress bar
-				var total int64 = int64(f.UncompressedSize64)
-				p := mpb.New(
-					mpb.WithWidth(60),
-					mpb.WithRefreshRate(180*time.Millisecond),
-				)
-				bar := p.New(total,
-					mpb.BarStyle().Lbound("[").Filler("=").Tip(">").Padding("-").Rbound("|"),
-					mpb.PrependDecorators(
-						decor.CountersKibiByte("\t% .2f / % .2f"),
-					),
-					mpb.AppendDecorators(
-						decor.OnComplete(decor.AverageETA(decor.ET_STYLE_GO), "✅ "),
-						decor.Name(" ] "),
-						decor.AverageSpeed(decor.UnitKiB, "% .2f"),
-					),
-				)
-				// create proxy reader
-				proxyReader := bar.ProxyReader(io.LimitReader(rc, total))
-				defer proxyReader.Close()
+				var p *mpb.Progress
+				if progress {
+					// setup progress bar
+					var total = int64(f.UncompressedSize64)
+					p = mpb.New(
+						mpb.WithWidth(60),
+						mpb.WithRefreshRate(180*time.Millisecond),
+					)
+					bar := p.New(total,
+						mpb.BarStyle().Lbound("[").Filler("=").Tip(">").Padding("-").Rbound("|"),
+						mpb.PrependDecorators(
+							decor.CountersKibiByte("\t% .2f / % .2f"),
+						),
+						mpb.AppendDecorators(
+							decor.OnComplete(decor.AverageETA(decor.ET_STYLE_GO), "✅ "),
+							decor.Name(" ] "),
+							decor.AverageSpeed(decor.UnitKiB, "% .2f"),
+						),
+					)
+					// create proxy reader
+					r = bar.ProxyReader(io.LimitReader(rc, total))
+					defer r.Close()
+				} else {
+					r = rc
+				}
 
-				Indent(log.Info, 2)(fmt.Sprintf("Creating %s", strings.TrimPrefix(fname, cwd)))
+				Indent(log.Debug, 2)(fmt.Sprintf("Extracting %s", strings.TrimPrefix(fname, cwd)))
 				out, err := os.Create(fname)
 				if err != nil {
-					return fmt.Errorf("error creating remote unzipped file destination %s: %v", fname, err)
+					return nil, fmt.Errorf("error creating remote unzipped file destination %s: %v", fname, err)
 				}
 				defer out.Close()
 
-				io.Copy(out, proxyReader)
-				// wait for our bar to complete and flush and close remote zip and temp file
-				p.Wait()
+				io.Copy(out, r)
 
+				if progress {
+					// wait for our bar to complete and flush and close remote zip and temp file
+					p.Wait()
+				}
+
+				artifacts = append(artifacts, fname)
 			} else {
-				log.Warnf("%s already exists", fname)
+				Indent(log.Warn, 2)(fmt.Sprintf("%s already exists", fname))
 			}
 		}
 	}
 
 	if !found {
-		return fmt.Errorf("no files found matching %s", pattern.String())
+		return nil, fmt.Errorf("no files found matching %s", pattern.String())
 	}
 
-	return nil
+	return artifacts, nil
 }
 
 // Unzip - https://stackoverflow.com/a/24792688
@@ -391,7 +313,7 @@ func Unzip(src, dest string, filter func(f *zip.File) bool) ([]string, error) {
 					panic(err)
 				}
 			}()
-			Indent(log.Info, 2)(fmt.Sprintf("Created %s", path))
+			Indent(log.Debug, 2)(fmt.Sprintf("Extracted %s from %s", path, filepath.Base(src)))
 			_, err = io.Copy(f, rc)
 			if err != nil {
 				return err
@@ -402,7 +324,7 @@ func Unzip(src, dest string, filter func(f *zip.File) bool) ([]string, error) {
 
 	for _, f := range r.File {
 		if filter(f) {
-			fNames = append(fNames, filepath.Base(filepath.Clean(f.Name)))
+			fNames = append(fNames, filepath.Join(dest, filepath.Base(filepath.Clean(f.Name))))
 			err := extractAndWriteFile(f)
 			if err != nil {
 				return nil, err
@@ -427,7 +349,7 @@ func UnTarGz(tarfile, destPath string) error {
 
 	tarReader := tar.NewReader(uncompressedStream)
 
-	for true {
+	for {
 		header, err := tarReader.Next()
 
 		if err == io.EOF {
@@ -460,40 +382,4 @@ func UnTarGz(tarfile, destPath string) error {
 		}
 	}
 	return nil
-}
-
-// GrepStrings returns all matching strings in []byte
-func GrepStrings(data []byte, searchStr string) []string {
-
-	var matchStrings []string
-
-	r := bytes.NewBuffer(data[:])
-
-	for {
-		s, err := r.ReadString('\x00')
-
-		if err == io.EOF {
-			break
-		}
-
-		if err != nil {
-			log.Fatal(err.Error())
-		}
-
-		if len(s) > 0 && strings.Contains(s, searchStr) {
-			matchStrings = append(matchStrings, strings.Trim(s, "\x00"))
-		}
-	}
-
-	return matchStrings
-}
-
-// IsASCII checks if given string is ascii
-func IsASCII(s string) bool {
-	for _, r := range s {
-		if r > unicode.MaxASCII || !unicode.IsPrint(r) {
-			return false
-		}
-	}
-	return true
 }

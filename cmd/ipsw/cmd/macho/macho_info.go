@@ -1,5 +1,5 @@
 /*
-Copyright © 2018-2022 blacktop
+Copyright © 2018-2023 blacktop
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -35,19 +35,27 @@ import (
 	"text/tabwriter"
 
 	"github.com/AlecAivazis/survey/v2"
+	"github.com/alecthomas/chroma/quick"
 	"github.com/apex/log"
 	"github.com/blacktop/go-macho"
 	"github.com/blacktop/go-macho/pkg/fixupchains"
 	"github.com/blacktop/go-macho/types"
 	"github.com/blacktop/ipsw/internal/certs"
 	"github.com/blacktop/ipsw/internal/magic"
+	swift "github.com/blacktop/ipsw/internal/swift"
 	"github.com/blacktop/ipsw/internal/utils"
 	"github.com/blacktop/ipsw/pkg/plist"
+	"github.com/fatih/color"
 	"github.com/fullsailor/pkcs7"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
+
+var symAddrColor = color.New(color.Faint).SprintfFunc()
+var symTypeColor = color.New(color.Faint, color.FgCyan).SprintfFunc()
+var symLibColor = color.New(color.Faint, color.FgMagenta).SprintfFunc()
+var symNameColor = color.New(color.Bold).SprintFunc()
 
 func init() {
 	MachoCmd.AddCommand(machoInfoCmd)
@@ -59,7 +67,8 @@ func init() {
 	machoInfoCmd.Flags().BoolP("sig", "s", false, "Print code signature")
 	machoInfoCmd.Flags().BoolP("ent", "e", false, "Print entitlements")
 	machoInfoCmd.Flags().BoolP("objc", "o", false, "Print ObjC info")
-	machoInfoCmd.Flags().BoolP("objc-refs", "r", false, "Print ObjC references")
+	machoInfoCmd.Flags().Bool("objc-refs", false, "Print ObjC references")
+	machoInfoCmd.Flags().BoolP("swift", "w", false, "🚧 Print Swift info")
 	machoInfoCmd.Flags().BoolP("symbols", "n", false, "Print symbols")
 	machoInfoCmd.Flags().BoolP("strings", "c", false, "Print cstrings")
 	machoInfoCmd.Flags().BoolP("starts", "f", false, "Print function starts")
@@ -69,6 +78,7 @@ func init() {
 	machoInfoCmd.Flags().BoolP("extract-fileset-entry", "x", false, "Extract the fileset entry")
 	machoInfoCmd.Flags().BoolP("all-fileset-entries", "z", false, "Parse all fileset entries")
 	machoInfoCmd.Flags().Bool("dump-cert", false, "Dump the certificate")
+	machoInfoCmd.Flags().BoolP("bit-code", "b", false, "Dump the LLVM bitcode")
 	machoInfoCmd.Flags().String("output", "", "Directory to extract files to")
 
 	viper.BindPFlag("macho.info.arch", machoInfoCmd.Flags().Lookup("arch"))
@@ -79,6 +89,7 @@ func init() {
 	viper.BindPFlag("macho.info.ent", machoInfoCmd.Flags().Lookup("ent"))
 	viper.BindPFlag("macho.info.objc", machoInfoCmd.Flags().Lookup("objc"))
 	viper.BindPFlag("macho.info.objc-refs", machoInfoCmd.Flags().Lookup("objc-refs"))
+	viper.BindPFlag("macho.info.swift", machoInfoCmd.Flags().Lookup("swift"))
 	viper.BindPFlag("macho.info.symbols", machoInfoCmd.Flags().Lookup("symbols"))
 	viper.BindPFlag("macho.info.starts", machoInfoCmd.Flags().Lookup("starts"))
 	viper.BindPFlag("macho.info.strings", machoInfoCmd.Flags().Lookup("strings"))
@@ -88,6 +99,7 @@ func init() {
 	viper.BindPFlag("macho.info.extract-fileset-entry", machoInfoCmd.Flags().Lookup("extract-fileset-entry"))
 	viper.BindPFlag("macho.info.all-fileset-entries", machoInfoCmd.Flags().Lookup("all-fileset-entries"))
 	viper.BindPFlag("macho.info.dump-cert", machoInfoCmd.Flags().Lookup("dump-cert"))
+	viper.BindPFlag("macho.info.bit-code", machoInfoCmd.Flags().Lookup("bit-code"))
 	viper.BindPFlag("macho.info.output", machoInfoCmd.Flags().Lookup("output"))
 
 	machoInfoCmd.MarkZshCompPositionalArgumentFile(1)
@@ -118,6 +130,7 @@ var machoInfoCmd = &cobra.Command{
 		showEntitlements := viper.GetBool("macho.info.ent")
 		showObjC := viper.GetBool("macho.info.objc")
 		showObjcRefs := viper.GetBool("macho.info.objc-refs")
+		showSwift := viper.GetBool("macho.info.swift")
 		showSymbols := viper.GetBool("macho.info.symbols")
 		showFuncStarts := viper.GetBool("macho.info.starts")
 		dumpStrings := viper.GetBool("macho.info.strings")
@@ -126,20 +139,22 @@ var machoInfoCmd = &cobra.Command{
 		filesetEntry := viper.GetString("macho.info.fileset-entry")
 		extractfilesetEntry := viper.GetBool("macho.info.extract-fileset-entry")
 		dumpCert := viper.GetBool("macho.info.dump-cert")
+		dumpBitCode := viper.GetBool("macho.info.bit-code")
 		extractPath := viper.GetString("macho.info.output")
 
 		if len(filesetEntry) == 0 && extractfilesetEntry {
 			return fmt.Errorf("you must supply a --fileset-entry|-t AND --extract-fileset-entry|-x to extract a file-set entry")
 		}
 
-		onlySig := !showHeader && !showLoadCommands && showSignature && !showEntitlements && !showObjC && !showSymbols && !showFixups && !showFuncStarts && !dumpStrings && !showSplitSeg
-		onlyEnt := !showHeader && !showLoadCommands && !showSignature && showEntitlements && !showObjC && !showSymbols && !showFixups && !showFuncStarts && !dumpStrings && !showSplitSeg
-		onlyFixups := !showHeader && !showLoadCommands && !showSignature && !showEntitlements && !showObjC && !showSymbols && showFixups && !showFuncStarts && !dumpStrings && !showSplitSeg
-		onlyFuncStarts := !showHeader && !showLoadCommands && !showSignature && !showEntitlements && !showObjC && !showSymbols && !showFixups && showFuncStarts && !dumpStrings && !showSplitSeg
-		onlyStrings := !showHeader && !showLoadCommands && !showSignature && !showEntitlements && !showObjC && !showSymbols && !showFixups && !showFuncStarts && dumpStrings && !showSplitSeg
-		onlySymbols := !showHeader && !showLoadCommands && !showSignature && !showEntitlements && !showObjC && showSymbols && !showFixups && !showFuncStarts && !dumpStrings && !showSplitSeg
-		onlyObjC := !showHeader && !showLoadCommands && !showSignature && !showEntitlements && showObjC && !showSymbols && !showFixups && !showFuncStarts && !dumpStrings && !showSplitSeg
-		onlySplitSegs := !showHeader && !showLoadCommands && !showSignature && !showEntitlements && !showObjC && !showSymbols && !showFixups && !showFuncStarts && !dumpStrings && showSplitSeg
+		onlySig := !showHeader && !showLoadCommands && showSignature && !showEntitlements && !showObjC && !showSymbols && !showFixups && !showFuncStarts && !dumpStrings && !showSplitSeg && !showSwift
+		onlyEnt := !showHeader && !showLoadCommands && !showSignature && showEntitlements && !showObjC && !showSymbols && !showFixups && !showFuncStarts && !dumpStrings && !showSplitSeg && !showSwift
+		onlyFixups := !showHeader && !showLoadCommands && !showSignature && !showEntitlements && !showObjC && !showSymbols && showFixups && !showFuncStarts && !dumpStrings && !showSplitSeg && !showSwift
+		onlyFuncStarts := !showHeader && !showLoadCommands && !showSignature && !showEntitlements && !showObjC && !showSymbols && !showFixups && showFuncStarts && !dumpStrings && !showSplitSeg && !showSwift
+		onlyStrings := !showHeader && !showLoadCommands && !showSignature && !showEntitlements && !showObjC && !showSymbols && !showFixups && !showFuncStarts && dumpStrings && !showSplitSeg && !showSwift
+		onlySymbols := !showHeader && !showLoadCommands && !showSignature && !showEntitlements && !showObjC && showSymbols && !showFixups && !showFuncStarts && !dumpStrings && !showSplitSeg && !showSwift
+		onlyObjC := !showHeader && !showLoadCommands && !showSignature && !showEntitlements && showObjC && !showSymbols && !showFixups && !showFuncStarts && !dumpStrings && !showSplitSeg && !showSwift
+		onlySplitSegs := !showHeader && !showLoadCommands && !showSignature && !showEntitlements && !showObjC && !showSymbols && !showFixups && !showFuncStarts && !dumpStrings && !showSplitSeg && !showSwift
+		onlySwift := !showHeader && !showLoadCommands && !showSignature && !showEntitlements && !showObjC && !showSymbols && !showFixups && !showFuncStarts && !dumpStrings && !showSplitSeg && showSwift
 
 		machoPath := filepath.Clean(args[0])
 
@@ -233,6 +248,86 @@ var machoInfoCmd = &cobra.Command{
 			}
 		}
 
+		if dumpBitCode {
+			// NOTE: /opt/homebrew/opt/llvm/bin/llvm-dis 1.bc 2.bc 3.bc # to disassemble bitcode
+			xr, err := m.GetEmbeddedLLVMBitcode()
+			if err != nil {
+				return fmt.Errorf("failed to get embedded llvm bitcode: %v", err)
+			}
+			reverse := func(arr []string) []string {
+				reversed := make([]string, len(arr))
+				j := 0
+				for i := len(arr) - 1; i >= 0; i-- {
+					reversed[j] = arr[i]
+					j++
+				}
+				return reversed
+			}
+			sd := xr.Subdoc()
+			var lo string
+			for i, l := range reverse(sd.LinkOptions) {
+				if i == 0 {
+					lo = "    " + l
+				} else if strings.HasPrefix(l, "-") {
+					lo += "\n    " + l
+				} else {
+					lo += " " + l
+				}
+			}
+			var ds []string
+			for _, d := range reverse(sd.Dylibs) {
+				ds = append(ds, fmt.Sprintf("    %s", d))
+			}
+			fmt.Printf(
+				"LLVM Bitcode:\n"+
+					"  Name:      %s\n"+
+					"  Version:   %s\n"+
+					"  Platform:  %s\n"+
+					"  Arch:      %s\n"+
+					"  SDK:       %s\n"+
+					"  Hide Syms: %d\n"+
+					"  Linker Options:\n"+
+					"%s\n"+
+					"  Dylibs:\n"+
+					"%s\n\n",
+				sd.Name,
+				sd.Version,
+				sd.Platform,
+				sd.Arch,
+				sd.SDKVersion,
+				sd.HideSymbols,
+				lo,
+				strings.Join(ds, "\n"),
+			)
+			if xr.HasSignature() {
+				log.Infof("Found embedded llvm bitcode signature")
+				for _, cert := range xr.Certificates {
+					fmt.Println(cert)
+				}
+			}
+			if err := os.MkdirAll(folder, 0755); err != nil {
+				return fmt.Errorf("failed to create folder %s: %v", folder, err)
+			}
+			toc := xr.TOC()
+			for idx, xf := range xr.File {
+				f, err := xf.Open()
+				if err != nil {
+					return fmt.Errorf("failed to open xar file: %v", err)
+				}
+				data, err := io.ReadAll(f)
+				if err != nil {
+					return fmt.Errorf("failed to read xar file: %v", err)
+				}
+				log.Infof("%s: %s", toc.File[idx-1].FileType, strings.Join(reverse(toc.File[idx-1].ClangArgs), " "))
+				utils.Indent(log.Info, 2)("Extracting " + filepath.Join(folder, xf.Name+".bc"))
+				if err := os.WriteFile(filepath.Join(folder, xf.Name+".bc"), data, 0644); err != nil {
+					return fmt.Errorf("failed to write bitcode file: %v", err)
+				}
+				f.Close()
+			}
+			return nil
+		}
+
 		// Fileset MachO type
 		if len(filesetEntry) > 0 {
 			if m.FileTOC.FileHeader.Type == types.MH_FILESET {
@@ -276,7 +371,7 @@ var machoInfoCmd = &cobra.Command{
 		if showHeader && !showLoadCommands {
 			fmt.Println(m.FileHeader.String())
 		}
-		if showLoadCommands || (!showHeader && !showLoadCommands && !showSignature && !showEntitlements && !showObjC && !showSymbols && !showFixups && !showFuncStarts && !dumpStrings && !showSplitSeg) {
+		if showLoadCommands || (!showHeader && !showLoadCommands && !showSignature && !showEntitlements && !showObjC && !showSymbols && !showFixups && !showFuncStarts && !dumpStrings && !showSplitSeg && !showSwift) {
 			if viper.GetBool("macho.info.json") {
 				dat, err := m.FileTOC.MarshalJSON()
 				if err != nil {
@@ -366,7 +461,7 @@ var machoInfoCmd = &cobra.Command{
 					}
 				}
 				if len(m.CodeSignature().CMSSignature) > 0 {
-					fmt.Printf("CMS (RFC3852) signature (%d bytes):", len(m.CodeSignature().CMSSignature))
+					fmt.Printf("CMS (RFC3852) signature (%d bytes):\n", len(m.CodeSignature().CMSSignature))
 					p7, err := pkcs7.Parse(m.CodeSignature().CMSSignature)
 					if err != nil {
 						return err
@@ -499,7 +594,13 @@ var machoInfoCmd = &cobra.Command{
 				fmt.Println("============")
 			}
 			if m.CodeSignature() != nil && len(m.CodeSignature().Entitlements) > 0 {
-				fmt.Println(m.CodeSignature().Entitlements)
+				if viper.GetBool("color") {
+					if err := quick.Highlight(os.Stdout, m.CodeSignature().Entitlements, "xml", "terminal256", "nord"); err != nil {
+						return err
+					}
+				} else {
+					fmt.Println(m.CodeSignature().Entitlements)
+				}
 			} else {
 				fmt.Println("  - no entitlements")
 			}
@@ -520,11 +621,24 @@ var machoInfoCmd = &cobra.Command{
 					fmt.Println(m.GetObjCToc())
 				}
 				if protos, err := m.GetObjCProtocols(); err == nil {
+					seen := make(map[uint64]bool)
 					for _, proto := range protos {
-						if viper.GetBool("verbose") {
-							fmt.Println(proto.Verbose())
-						} else {
-							fmt.Println(proto.String())
+						if _, ok := seen[proto.Ptr]; !ok { // prevent displaying duplicates
+							if viper.GetBool("verbose") {
+								if viper.GetBool("color") {
+									quick.Highlight(os.Stdout, swift.DemangleBlob(proto.Verbose()), "objc", "terminal256", "nord")
+									quick.Highlight(os.Stdout, "\n/****************************************/\n\n", "objc", "terminal256", "nord")
+								} else {
+									fmt.Println(swift.DemangleBlob(proto.Verbose()))
+								}
+							} else {
+								if viper.GetBool("color") {
+									quick.Highlight(os.Stdout, proto.String()+"\n", "objc", "terminal256", "nord")
+								} else {
+									fmt.Println(proto.String())
+								}
+							}
+							seen[proto.Ptr] = true
 						}
 					}
 				} else if !errors.Is(err, macho.ErrObjcSectionNotFound) {
@@ -533,9 +647,18 @@ var machoInfoCmd = &cobra.Command{
 				if classes, err := m.GetObjCClasses(); err == nil {
 					for _, class := range classes {
 						if viper.GetBool("verbose") {
-							fmt.Println(class.Verbose())
+							if viper.GetBool("color") {
+								quick.Highlight(os.Stdout, swift.DemangleBlob(class.Verbose()), "objc", "terminal256", "nord")
+								quick.Highlight(os.Stdout, "\n/****************************************/\n\n", "objc", "terminal256", "nord")
+							} else {
+								fmt.Println(swift.DemangleBlob(class.Verbose()))
+							}
 						} else {
-							fmt.Println(class.String())
+							if viper.GetBool("color") {
+								quick.Highlight(os.Stdout, class.String()+"\n", "objc", "terminal256", "nord")
+							} else {
+								fmt.Println(class.String())
+							}
 						}
 					}
 				} else if !errors.Is(err, macho.ErrObjcSectionNotFound) {
@@ -544,9 +667,18 @@ var machoInfoCmd = &cobra.Command{
 				if cats, err := m.GetObjCCategories(); err == nil {
 					for _, cat := range cats {
 						if viper.GetBool("verbose") {
-							fmt.Println(cat.Verbose())
+							if viper.GetBool("color") {
+								quick.Highlight(os.Stdout, swift.DemangleBlob(cat.Verbose()), "objc", "terminal256", "nord")
+								quick.Highlight(os.Stdout, "\n/****************************************/\n\n", "objc", "terminal256", "nord")
+							} else {
+								fmt.Println(swift.DemangleBlob(cat.Verbose()))
+							}
 						} else {
-							fmt.Println(cat.String())
+							if viper.GetBool("color") {
+								quick.Highlight(os.Stdout, cat.String()+"\n", "objc", "terminal256", "nord")
+							} else {
+								fmt.Println(cat.String())
+							}
 						}
 					}
 				} else if !errors.Is(err, macho.ErrObjcSectionNotFound) {
@@ -615,6 +747,45 @@ var machoInfoCmd = &cobra.Command{
 			fmt.Println()
 		}
 
+		if showSwift {
+			if !onlySwift {
+				fmt.Println("Swift")
+				fmt.Println("=====")
+			}
+			info, err := m.GetObjCImageInfo()
+			if err != nil {
+				if !errors.Is(err, macho.ErrObjcSectionNotFound) {
+					return err
+				}
+			}
+			if info != nil && info.HasSwift() {
+				if fields, err := m.GetSwiftFields(); err == nil {
+					for _, field := range fields {
+						if viper.GetBool("verbose") {
+							if viper.GetBool("color") {
+								quick.Highlight(os.Stdout, swift.DemangleBlob(field.String()), "swift", "terminal256", "nord")
+								quick.Highlight(os.Stdout, "\n/****************************************/\n\n", "swift", "terminal256", "nord")
+							} else {
+								fmt.Println(swift.DemangleBlob(field.String()))
+							}
+						} else {
+							if viper.GetBool("color") {
+								quick.Highlight(os.Stdout, field.String(), "swift", "terminal256", "nord")
+								quick.Highlight(os.Stdout, "\n/****************************************/\n\n", "swift", "terminal256", "nord")
+							} else {
+								fmt.Println(field.String())
+							}
+						}
+					}
+				} else if !errors.Is(err, macho.ErrSwiftSectionError) {
+					log.Error(err.Error())
+				}
+			} else {
+				fmt.Println("  - no swift")
+			}
+			fmt.Println()
+		}
+
 		if showFuncStarts {
 			if !onlyFuncStarts {
 				fmt.Println("FUNCTION STARTS")
@@ -625,7 +796,7 @@ var machoInfoCmd = &cobra.Command{
 					if viper.GetBool("verbose") {
 						fmt.Printf("%#016x-%#016x\n", fn.StartAddr, fn.EndAddr)
 					} else {
-						fmt.Printf("0x%016X\n", fn.StartAddr)
+						fmt.Printf("%#016x\n", fn.StartAddr)
 					}
 				}
 			} else {
@@ -638,33 +809,22 @@ var machoInfoCmd = &cobra.Command{
 				fmt.Println("SYMBOLS")
 				fmt.Println("=======")
 			}
-			var sec string
 			var label string
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', 0)
 			if m.Symtab != nil {
 				label = "Symtab"
 				fmt.Printf("\n%s\n", label)
 				fmt.Println(strings.Repeat("-", len(label)))
+				undeflush := false
 				for _, sym := range m.Symtab.Syms {
-					if sym.Sect > 0 && int(sym.Sect) <= len(m.Sections) {
-						sec = fmt.Sprintf("%s.%s", m.Sections[sym.Sect-1].Seg, m.Sections[sym.Sect-1].Name)
+					if sym.Type.IsUndefinedSym() && !undeflush {
+						w.Flush()
+						undeflush = true
 					}
-					var lib string
-					if sym.Desc.GetLibraryOrdinal() != types.SELF_LIBRARY_ORDINAL && sym.Desc.GetLibraryOrdinal() < types.MAX_LIBRARY_ORDINAL {
-						lib = fmt.Sprintf("\t(%s)", filepath.Base(m.ImportedLibraries()[sym.Desc.GetLibraryOrdinal()-1]))
-					}
-					if viper.GetBool("verbose") {
-						if sym.Value == 0 {
-							fmt.Fprintf(w, "              <%s> [%s]\t%s%s\n", sym.Type.String(sec), sym.Desc, sym.Name, lib)
-						} else {
-							fmt.Fprintf(w, "%#09x:  <%s> [%s]\t%s%s\n", sym.Value, sym.Type.String(sec), sym.Desc, sym.Name, lib)
-						}
+					if sym.Value == 0 {
+						fmt.Fprintf(w, "              %s\n", strings.Join([]string{symTypeColor(sym.GetType(m)), symNameColor(sym.Name), symLibColor(sym.GetLib(m))}, "\t"))
 					} else {
-						if sym.Value == 0 {
-							fmt.Fprintf(w, "              <%s>\t%s%s\n", sym.Type.String(sec), sym.Name, lib)
-						} else {
-							fmt.Fprintf(w, "%#09x:  <%s>\t%s%s\n", sym.Value, sym.Type.String(sec), sym.Name, lib)
-						}
+						fmt.Fprintf(w, "%s:  %s\n", symAddrColor("%#09x", sym.Value), strings.Join([]string{symTypeColor(sym.GetType(m)), symNameColor(sym.Name), symLibColor(sym.GetLib(m))}, "\t"))
 					}
 				}
 				w.Flush()
@@ -676,25 +836,23 @@ var machoInfoCmd = &cobra.Command{
 				fmt.Printf("\n%s\n", label)
 				fmt.Println(strings.Repeat("-", len(label)))
 				for _, bind := range binds {
-					fmt.Fprintf(w, "%#09x:\t%s\n", bind.Start+bind.Offset, bind)
+					fmt.Printf("%s:  %s\n", symAddrColor("%#09x", bind.Start+bind.Offset), symNameColor(bind))
 				}
-				w.Flush()
 			}
 			if rebases, err := m.GetRebaseInfo(); err == nil {
 				label = "DyldInfo [Rebases]"
 				fmt.Printf("\n%s\n", label)
 				fmt.Println(strings.Repeat("-", len(label)))
 				for _, rebase := range rebases {
-					fmt.Fprintf(w, "%#09x:\t%s\n", rebase.Start+rebase.Offset, rebase)
+					fmt.Printf("%s:  %s\n", symAddrColor("%#09x", rebase.Start+rebase.Offset), symNameColor(rebase))
 				}
-				w.Flush()
 			}
 			if exports, err := m.GetExports(); err == nil {
 				label = "DyldInfo [Exports]"
 				fmt.Printf("\n%s\n", label)
 				fmt.Println(strings.Repeat("-", len(label)))
 				for _, export := range exports {
-					fmt.Fprintf(w, "%#09x:  <%s> \t %s\n", export.Address, export.Flags, export.Name)
+					fmt.Fprintf(w, "%#09x:  %s\t%s\n", symAddrColor("%#09x", export.Address), symTypeColor(export.Flags.String()), symNameColor(export.Name))
 				}
 				w.Flush()
 			}
@@ -707,7 +865,7 @@ var machoInfoCmd = &cobra.Command{
 					return err
 				}
 				for _, export := range exports {
-					fmt.Fprintf(w, "%#09x:  <%s> \t %s\n", export.Address, export.Flags, export.Name)
+					fmt.Fprintf(w, "%s:  %s\t%s\n", symAddrColor("%#09x", export.Address), symTypeColor(export.Flags.String()), symNameColor(export.Name))
 				}
 				w.Flush()
 			}
@@ -775,13 +933,25 @@ var machoInfoCmd = &cobra.Command{
 				}
 			}
 			m.ForEachV2SplitSegReference(func(fromSectionIndex, fromSectionOffset, toSectionIndex, toSectionOffset uint64, kind types.SplitInfoKind) {
+				var toSeg string
+				var toName string
+				var toAddr uint64
+				if toSectionIndex > 0 {
+					toSeg = sections[toSectionIndex-1].Seg
+					toName = sections[toSectionIndex-1].Name
+					toAddr = sections[toSectionIndex-1].Addr + fromSectionOffset
+				} else {
+					toSeg = "mach"
+					toName = "header"
+					toAddr = fromSectionOffset
+				}
 				fmt.Printf("%16s.%-16s %#08x  =>  %16s.%-16s %#08x\tkind(%s)\n",
 					sections[fromSectionIndex-1].Seg,
 					sections[fromSectionIndex-1].Name,
 					sections[fromSectionIndex-1].Addr+fromSectionOffset,
-					sections[toSectionIndex-1].Seg,
-					sections[toSectionIndex-1].Name,
-					sections[toSectionIndex-1].Addr+toSectionOffset,
+					toSeg,
+					toName,
+					toAddr,
 					kind)
 			})
 		}
@@ -793,9 +963,13 @@ var machoInfoCmd = &cobra.Command{
 			}
 			for _, sec := range m.Sections {
 				if sec.Flags.IsCstringLiterals() || sec.Seg == "__TEXT" && sec.Name == "__const" {
-					dat, err := sec.Data()
+					off, err := m.GetOffset(sec.Addr)
 					if err != nil {
-						return fmt.Errorf("failed to read cstrings in %s.%s: %v", sec.Seg, sec.Name, err)
+						return fmt.Errorf("failed to get offset for %s.%s: %v", sec.Seg, sec.Name, err)
+					}
+					dat := make([]byte, sec.Size)
+					if _, err = m.ReadAt(dat, int64(off)); err != nil {
+						return fmt.Errorf("failed to read cstring data in %s.%s: %v", sec.Seg, sec.Name, err)
 					}
 
 					csr := bytes.NewBuffer(dat)
@@ -819,7 +993,7 @@ var machoInfoCmd = &cobra.Command{
 							if (sec.Seg == "__TEXT" && sec.Name == "__const") && !utils.IsASCII(s) {
 								continue // skip non-ascii strings when dumping __TEXT.__const
 							}
-							fmt.Printf("%#x: %#v\n", pos, s)
+							fmt.Printf("%s: %s\n", symAddrColor("%#09x", pos), symNameColor(fmt.Sprintf("%#v", s)))
 						}
 					}
 				}
@@ -829,7 +1003,7 @@ var machoInfoCmd = &cobra.Command{
 					fmt.Printf("\nCFStrings\n")
 					fmt.Println("---------")
 					for _, cfstr := range cfstrs {
-						fmt.Printf("%#09x:  %#v\n", cfstr.Address, cfstr.Name)
+						fmt.Printf("%s:  %s\n", symAddrColor("%#09x", cfstr.Address), symNameColor(fmt.Sprintf("%#v", cfstr.Name)))
 					}
 				}
 			}

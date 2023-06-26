@@ -32,6 +32,7 @@ var ErrNoExportTrieInCache = errors.New("dyld shared cache does NOT contain expo
 var ErrNoExportTrieInMachO = errors.New("dylib does NOT contain export trie info")
 var ErrSymbolNotInExportTrie = errors.New("dylib does NOT contain symbolin export trie info")
 var ErrSymbolNotInImage = errors.New("dylib does NOT contain symbol")
+var ErrNoPrebuiltLoadersInCache = errors.New("dyld shared cache does NOT contain prebuilt loader info")
 
 type symKind uint8
 
@@ -318,7 +319,7 @@ func (f *File) GetExportedSymbols(ctx context.Context, symbolName string) (<-cha
 		return syms, errs.Wait()
 	}
 
-	return nil, fmt.Errorf("shared cache does not support prebuilt loader")
+	return nil, ErrNoPrebuiltLoadersInCache
 }
 
 func (f *File) DumpStubIslands() error {
@@ -335,6 +336,21 @@ func (f *File) DumpStubIslands() error {
 		}
 	}
 	return nil
+}
+
+func (f *File) GetStubIslands() (map[uint64]string, error) {
+	stubs := make(map[uint64]string)
+	if len(f.islandStubs) == 0 {
+		if err := f.ParseStubIslands(); err != nil {
+			return nil, fmt.Errorf("failed to parse stub islands: %v", err)
+		}
+	}
+	for stub, target := range f.islandStubs {
+		if symName, ok := f.AddressToSymbol[target]; ok {
+			stubs[stub] = symName
+		}
+	}
+	return stubs, nil
 }
 
 // OpenOrCreateA2SCache returns an address to symbol map if the cache file exists otherwise it will create a NEW one
@@ -367,12 +383,11 @@ func (f *File) OpenOrCreateA2SCache(cacheFile string) error {
 				}
 			}
 		}
-
-		if err := f.SaveAddrToSymMap(cacheFile); err != nil {
-			return err
+		log.Info("parsing objc info...")
+		if err := f.ParseAllObjc(); err != nil {
+			utils.Indent(log.Error, 2)(fmt.Sprintf("failed to parse objc info: %v: Continuing on without it...", err))
 		}
-
-		return nil
+		return f.SaveAddrToSymMap(cacheFile)
 	}
 
 	a2sFile, err := os.Open(cacheFile)

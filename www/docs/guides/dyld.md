@@ -61,7 +61,9 @@ Images
    4: 0x180093000 /usr/lib/system/libsystem_c.dylib                                                               (1431.0.0)
 ```
 
-**NOTE:** We added the `-s` or `--sig` flag to also parse the _CodeDirectory_.
+:::info note
+We added the `-s` or `--sig` flag to also parse the _CodeDirectory_.
+:::
 
 You can also dump the `launch closures`
 
@@ -152,35 +154,81 @@ DOF Offsets:
 	0x3a6d04
 ```
 
-> **NOTE:** This currently doesn't _yet_ work on macOS12+/iOS15+ caches
+:::info note
+In macOS12+/iOS15+ caches replaced this data with `prebuilt loader sets` which contain much of the same data and are still VERY powerful  *(this cmd outputs both types)*
+:::
 
 ### **dyld extract**
 
-Extract _dyld_shared_cache_ from a previously downloaded _ipsw_
-
-- `macOS`
+Extract dylib from *dyld_shared_cache*
 
 ```bash
-❯ ipsw dyld extract iPhone11,2_12.0_16A366_Restore.ipsw
-   • Extracting dyld_shared_cache from IPSW
-   • Mounting DMG
-   • Extracting System/Library/Caches/com.apple.dyld/dyld_shared_cache_arm64e to dyld_shared_cache
-   • Unmounting DMG
+❯ ipsw dyld extract dyld_shared_cache_arm64e JavaScriptCore
+   • Created JavaScriptCore
 ```
 
-- `docker`
+Extract all dylibs from *dyld_shared_cache*
 
 ```bash
-❯ docker run --init -it --rm \
-             --device /dev/fuse \
-             --cap-add=SYS_ADMIN \
-             -v `pwd` :/data \
-             blacktop/ipsw -V dyld extract iPhone11_2_12.4.1_16G102_Restore.ipsw
+❯ ipsw dyld extract dyld_shared_cache_arm64e --all
+   • Extracting all dylibs from dyld_shared_cache_arm64e
+      ✅  [=============================================================| 2700/2700 ]
 ```
+
+:::info note
+This command allows you to extract dylibs on non-darwin systems and it will add all local symbols to the symbol table as well as apply the DSC slide info for the pages included in the dylib if you supply the `--slide` flag *(this removes PACed pointers)*
+ 
+🆕 We recently added 2 new flags:
+ - `--objc` that "symbolicates" ObjC runtime info *(classes, class methods instance methods, categories, etc.)*
+ - `--stubs` that "symbolicates" all the addresses that point to StubIsland stubs *(**NOTE:** right now this adds ALL them, in the future we'll try and only add the needed stubs)*
+
+> **NOTE:** This isn't repairing the ObjC runtime data or patching stubs, it's just adding the symbols to the symbol table so you can use them in your analysis.
+:::
+
+:::caution
+
+This command isn't 💯 done yet and is missing some features:
+- [ ] Repairing the ObjC runtime data
+- [ ] Patching the stubs  
+- [ ] 🤔 Create an [issue](https://github.com/blacktop/ipsw/issues) if you would like something else added
+
+The goal with this command is to 1) create "near" perfect dylibs that can be used as stand alone frameworks and 2) create dylibs for reverse engineering *(packed with symbols etc)* for use in tools like Ghidra.
+:::
 
 ### **dyld macho**
 
 Parse a cached `dylib` MachO file
+
+```bash
+❯ ipsw dyld macho --help
+Parse a dylib file
+
+Usage:
+  ipsw dyld macho <dyld_shared_cache> <dylib> [flags]
+
+Flags:
+  -a, --all             Parse ALL dylibs
+  -x, --extract         🚧 Extract the dylib
+      --force           Overwrite existing extracted dylib(s)
+  -h, --help            help for macho
+  -j, --json            Print the TOC as JSON
+  -l, --loads           Print the load commands
+  -o, --objc            Print ObjC info
+  -r, --objc-refs       Print ObjC references
+      --output string   Directory to extract the dylib(s)
+      --search string   Search for byte pattern
+  -f, --starts          Print function starts
+  -s, --strings         Print cstrings
+  -b, --stubs           Print stubs
+  -n, --symbols         Print symbols
+
+Global Flags:
+      --color           colorize output
+      --config string   config file (default is $HOME/.ipsw/config.yaml)
+  -V, --verbose         verbose output
+```
+
+#### Print a dylibs load commands AND dump the ObjC runtime data
 
 ```bash
 ❯ ipsw dyld macho dyld_shared_cache JavaScriptCore --loads --objc
@@ -197,8 +245,7 @@ Flags         = NoUndefs, DyldLink, TwoLevel, NoReexportedDylibs, AppExtensionSa
 <SNIP>
 ```
 
-```m
-<SNIP>
+```objc
 0x001e39fc000 JSContext : NSObject {
   // instance variables
   +0x08 @"JSVirtualMachine" m_virtualMachine (0x8)
@@ -264,14 +311,103 @@ Flags         = NoUndefs, DyldLink, TwoLevel, NoReexportedDylibs, AppExtensionSa
 <SNIP>
 ```
 
-> **NOTE:** Make the output look amazing by piping to `bat -l m --tabs 0 -p --theme Nord --wrap=never --pager "less -S"`
+:::info note
+Make the output look amazing by piping to `bat -l m --tabs 0 -p --theme Nord --wrap=never --pager "less -S"`
+:::
+
+#### Dump a dylib's header as JSON
+
+```bash
+❯ ipsw dyld macho dyld_shared_cache_arm64e JavaScriptCore --json | jq . -C | less -Sr
+```
+
+```json
+{
+  "header": {
+    "magic": "64-bit MachO",
+    "type": "DYLIB",
+    "cpu": "AARCH64, ARM64e caps: USR00",
+    "commands": 24,
+    "commands_size": 4736,
+    "flags": [
+      "NoUndefs",
+      "DyldLink",
+      "TwoLevel",
+      "BindsToWeak",
+      "NoReexportedDylibs",
+      "AppExtensionSafe",
+      "DylibInCache"
+    ]
+  },
+  "loads": [
+    {
+      "load_cmd": "LC_SEGMENT_64",
+      "len": 1112,
+      "name": "__TEXT",
+      "addr": 6885064704,
+      "memsz": 21749760,
+      "offset": 376832,
+      "filesz": 21749760,
+      "maxprot": "r-x",
+      "prot": "r-x",
+      "nsect": 13,
+      "sections": [
+        {
+          "name": "__text",
+          "segment": "__TEXT",
+          "addr": 6885070320,
+          "size": 20555936,
+          "offset": 382448,
+          "align": 4,
+          "reloff": 0,
+          "nreloc": 0,
+          "type": 64
+        },
+<SNIP>        
+```
+
+#### Search for byte pattern
+
+```bash
+❯ ipsw dyld macho dyld_shared_cache_arm64e JavaScriptCore --search "7f 23 03 d5 * * * * f6 57 01 a9"
+
+Search Results
+--------------
+0x199f25c80
+0x199f26804
+0x199f285c4
+0x199f286c4
+0x199f28860
+0x199f289d8
+0x199f2966c
+<SNIP>
+```
+
+### **dyld stubs**
+
+Print out the 🆕 stubs islands
+
+```bash
+❯ ipsw dyld stubs dyld_shared_cache_arm64e | head
+   • Loading symbol cache file...
+0x199ce7640: _CMPhotoJPEGWriteMPFWithJPEG
+0x1ad5d5970: _objc_autorelease
+0x1c8d0f350: _$ss10_HashTableV12previousHole6beforeAB6BucketVAF_tF
+0x1cf7eba00: _$s5TeaUI14KeyCommandItemVMa
+0x1bb1f8a40: _swift_task_switch
+0x1ec2127d0: _CGColorGetColorSpace
+0x207434db0: __swift_stdlib_strtod_clocale
+0x1a0622e00: _objc_retain_x20
+0x1c1f87d30: _swift_getTupleTypeLayout3
+0x1bb220d70: _fcntl
+```
 
 ### **dyld symaddr**
 
 Find all instances of a symbol's _(unslid)_ addresses in shared cache
 
 ```bash
-❯ ipsw dyld symaddr dyld_shared_cache <SYMBOL_NAME>
+❯ ipsw dyld symaddr dyld_shared_cache <SYMBOL_NAME> --all
 ```
 
 Speed it up by supplying the dylib name
@@ -280,7 +416,9 @@ Speed it up by supplying the dylib name
 ❯ ipsw dyld symaddr --image JavaScriptCore dyld_shared_cache <SYMBOL_NAME>
 ```
 
-**NOTE:** you don't have to supply the full image path
+:::info note
+You don't have to supply the full image path
+:::
 
 Dump ALL teh symbolz!!!
 
@@ -294,11 +432,11 @@ Read in a JSON symbol lookup file
 ❯ jq . sym_lookup.json
 [
   {
-    "name": "__platform_memmove",
+    "pattern": "__platform_memmove",
     "image": "libsystem_platform.dylib"
   },
   {
-    "name": "_memcpy",
+    "pattern": "_memcpy",
     "image": "libsystem_c.dylib"
   }
 ]
@@ -332,7 +470,9 @@ Lookup what symbol is at a given _unslid_ or _slid_ address _(in hex)_
 0x19538e1e0: _objc_msgSend + 32
 ```
 
-> **NOTE:** This will also create a cached version of the lookup hash table (.a2s) so the next time you lookup it will be much faster
+:::info note
+This will also create a cached version of the lookup hash table (.a2s) so the next time you lookup it will be much faster
+:::
 
 ```bash
 ❯ time ipsw dyld a2s dyld_shared_cache 0x190a7221c
@@ -383,19 +523,48 @@ It can also take a file of pointers _(one per line)_ as input _(and will output 
 Dump all the classes
 
 ```bash
-❯ ipsw dyld objc --class dyld_shared_cache
+❯ ipsw dyld objc --class dyld_shared_cache_arm64e
+
+0x2180bb240: APClientInfoUI	            AdPlatformsCommonUI
+0x1dd4ccf40: FLFollowUpAction	            CoreFollowUp
+0x1dd47d338: ProcessAnalytics	            SymptomAnalytics
+0x1dda0ffb8: SBPosterBoardUpdateManager	SpringBoard
+0x1ddfbca18: NEIPv6Settings	            NetworkExtension
+0x2180bc130: QLExtension	               QuickLookSupport
+0x218898148: AXAlertAction	               AXSpringBoardServerInstance
+0x1dd606e98: _CPLOptimisticIDMapping	   CloudPhotoLibrary
+0x2186ec0d8: AUGenericViewController	   CoreAudioKit
+<SNIP>
 ```
 
 Dump all the protocols
 
 ```bash
 ❯ ipsw dyld objc --proto dyld_shared_cache
+
+0x1dd1489c8: NCNotificationListMigrationSchedulerDelegate	UserNotificationsUIKit
+0x1dd1d3688: SBSceneHandleObserverToken	                  SpringBoardUI
+    0x1dd09f288: _SFDynamicBarAnimatorStateObserver	SafariServices
+    0x1dd09f288: _SFDynamicBarAnimatorStateObserver	MobileSafariUI
+0x1dd0a9608: IXCoordinatorWithInstallOptions	   InstallCoordination
+0x1dd096288: SFCompanionServiceManagerProtocol	Sharing
+0x1dd0a8ee8: ATXEngagementRecordManagerProtocol	AppPredictionClient
+    0x1dd121368: WFParameterEventObserver	WorkflowKit
+    0x1dd121368: WFParameterEventObserver	WorkflowEditor
+    0x1dd121368: WFParameterEventObserver	WorkflowEditor
 ```
 
 Dump all the selectors
 
 ```bash
 ❯ ipsw dyld objc --sel dyld_shared_cache
+
+0x18307bd68: rtiDocumentState
+0x18527926c: _grabUserActivityTitleWithCallback:
+0x1856042a9: deleteHistoryWithCompletion:
+0x185017e2f: releaseViewManager
+0x182e62aa2: getAssetPathForLocale:
+0x183c89b23: T@"AVMomentCaptureMovie",&,N,V_movie
 ```
 
 Dump all the imp-caches
@@ -404,9 +573,13 @@ Dump all the imp-caches
 ❯ ipsw dyld objc --imp-cache dyld_shared_cache
 ```
 
+:::caution
+`--imp-cache` NOT supported on macOS12/iOS15+ *(yet)*
+:::
+
 ### **dyld objc class**
 
-Lookup a class's address
+Lookup a class's address *(same as `ipsw dyld objc --class`)*
 
 ```bash
 ❯ ipsw dyld objc class dyld_shared_cache release
@@ -422,7 +595,7 @@ Or get all the classes for an image
 
 ### **dyld objc proto**
 
-Lookup a protocol's address
+Lookup a protocol's address *(same as `ipsw dyld objc --proto`)*
 
 ```bash
 ❯ ipsw dyld objc proto dyld_shared_cache release
@@ -432,7 +605,7 @@ Lookup a protocol's address
 
 ### **dyld objc sel**
 
-Lookup a selector's address
+Lookup a selector's address *(same as `ipsw dyld objc --sel`)*
 
 ```bash
 ❯ ipsw dyld objc sel dyld_shared_cache release
@@ -464,8 +637,6 @@ Objective-C Selectors:
 
 ### **dyld split**
 
-> **NOTE:** Only works on macOS and requires XCode to be installed to the Applications folder
-
 Split up a _dyld_shared_cache_
 
 ```bash
@@ -483,13 +654,55 @@ Split up a _dyld_shared_cache_
 1444/1445
 ```
 
+To use an specific version of XCode
+
+```bash
+❯ ipsw dyld split dyld_shared_cache_arm64e --xcode ~/Downloads/Xcode_12.5.1.app
+```
+
+To create a `~/Library/Developer/Xcode/iOS DeviceSupport/` folder from a _dyld_shared_cache_ to symbolicate a remote `lldb` session
+
+```bash
+❯ ipsw dyld split dyld_shared_cache_arm64e --cache --version 16.3 --build 20D5035i
+   • Splitting dyld_shared_cache to ~/Library/Developer/Xcode/iOS DeviceSupport/16.3 (20D5035i) arm64e
+   • Creating XCode cache ~/Library/Developer/Xcode/iOS DeviceSupport/16.3 (20D5035i) arm64e/Info.plist
+0/2700
+1/2700
+2/2700
+3/2700
+4/2700
+5/2700
+6/2700
+7/2700
+8/2700
+<SNIP>
+```
+
+```bash
+❯ ls -1 ~/Library/Developer/Xcode/iOS\ DeviceSupport/
+14.4.1 (18D61)
+14.4.2 (18D70)
+16.0 (20A5303i) arm64e
+16.0 (20A5328h) arm64e
+16.0 (20A5339d) arm64e
+"16.3 (20D5035i) arm64e" 👀
+```
+
+:::info note
+This commnd calls into XCode's `dsc_extractor.bundle` so will ALWAYS work as long as your have a recent version of XCode installed
+:::
+
+:::info note
+If you are on a **non-darwin** system use the `ipsw dyld extract` command instead.  You can use the `ipsw dyld extract` command on **darwin** systems as well, however, it will be slower than using the `dsc_extractor.bundle` based `ipsw dyld split` command and *(for now)* only improves on the output by also applying the DSC slide-info if you use the `--slide` flag.  Eventually `ipsw dyld extract` will be able to create **near** perfect dylib extractions and will be the preferred command and this one will only be useful when Apple releases the next major OS version and inevitably breaks everyones DSC parsing 😏 again, but you can count on `ipsw` to once again be the FIRST to figure it out again 😁
+:::
+
 ### **dyld webkit**
 
 Extract WebKit version from _dyld_shared_cache_
 
 ```bash
-❯ ipsw dyld webkit --rev dyld_shared_cache
-   • WebKit Version: 609.1.17.0.1 (svn rev 256416)
+❯ ipsw dyld webkit dyld_shared_cache_arm64e
+   • WebKit Version: 614.4.4.0.3
 ```
 
 ### **dyld patches**
@@ -497,37 +710,59 @@ Extract WebKit version from _dyld_shared_cache_
 List dyld patch info
 
 ```bash
-❯ ipsw dyld patches dyld_shared_cache | grep entries
-   • [68 entries] /usr/lib/system/libsystem_c.dylib
-   • [243 entries] /usr/lib/system/libdispatch.dylib
-   • [13 entries] /usr/lib/system/libsystem_malloc.dylib
-   • [3 entries] /usr/lib/system/libsystem_platform.dylib
-   • [8 entries] /usr/lib/system/libsystem_pthread.dylib
-   • [6 entries] /usr/lib/libobjc.A.dylib
-   • [23 entries] /usr/lib/libc++abi.dylib
-   • [45 entries] /usr/lib/system/libsystem_kernel.dylib
-   • [2 entries] /usr/lib/system/libdyld.dylib
+❯ ipsw dyld patches dyld_shared_cache_arm64e
+[PATCHES] /usr/lib/libobjc.A.dylib	(258 symbols)
+0x1800c799c: _class_respondsToSelector
+    0x1de608458: (diversity: 0x0000, key: IA, auth: true) /usr/lib/swift/libswiftCore.dylib
+    0x1de667330: (diversity: 0x0000, key: IA, auth: true) /System/Library/Frameworks/Foundation.framework/Foundation
+    0x1de6a66b8: (diversity: 0x0000, key: IA, auth: true) /System/Library/Frameworks/CoreFoundation.framework/CoreFoundation
+    0x1de7e38f8: (diversity: 0x0000, key: IA, auth: true) /System/Library/Frameworks/CoreData.framework/CoreData
+    0x1dec4ef48: (diversity: 0x0000, key: IA, auth: true) /System/Library/PrivateFrameworks/GameCenterUI.framework/GameCenterUI
+    0x1def62d30: (diversity: 0x0000, key: IA, auth: true) /System/Library/PrivateFrameworks/GameCenterFoundation.framework/GameCenterFoundation
+    0x1df072928: (diversity: 0x0000, key: IA, auth: true) /System/Library/PrivateFrameworks/WorkflowKit.framework/WorkflowKit
+    0x1e234a1c8: (diversity: 0x0000, key: IA, auth: true) GOT
+    0x21a88fce8: (diversity: 0x0000, key: IA, auth: true) GOT
+0x1800bec28: _objc_setProperty_nonatomic
+    0x1de667bd0: (diversity: 0x0000, key: IA, auth: true) /System/Library/Frameworks/Foundation.framework/Foundation
+    0x1de7e3e70: (diversity: 0x0000, key: IA, auth: true) /System/Library/Frameworks/CoreData.framework/CoreData
+    0x1de84b178: (diversity: 0x0000, key: IA, auth: true) /System/Library/PrivateFrameworks/AccessibilityUtilities.framework/AccessibilityUtilities
+    0x1de9e0da0: (diversity: 0x0000, key: IA, auth: true) /System/Library/PrivateFrameworks/IMSharedUtilities.framework/IMSharedUtilities
+    0x1e06c5ac0: (diversity: 0x0000, key: IA, auth: true) /System/Library/PrivateFrameworks/CoreUI.framework/CoreUI
+    0x1deaa96c0: (diversity: 0x0000, key: IA, auth: true) /System/Library/PrivateFrameworks/Message.framework/Message
+<SNIP>    
 ```
 
 ```bash
-❯ ipsw dyld patches dyld_shared_cache -i libdyld.dylib
-0x0028074C (63 patches)  _dlclose
-0x00280820 (399 patches) _dlopen
+❯ ipsw dyld patches dyld_shared_cache_arm64e -i libdyld.dylib
+[PATCHES] /usr/lib/system/libdyld.dylib	(98 symbols)
+0x1a81ccbf4: __dyld_find_protocol_conformance_on_disk
+    0x1de608270: (key: IA, auth: true)                    /usr/lib/swift/libswiftCore.dylib
+    0x1de6083a8: (diversity: 0x0000, key: IA, auth: true) /usr/lib/swift/libswiftCore.dylib
+0x1a81caf30: _dlopen_preflight
+    0x1de6a6888: (diversity: 0x0000, key: IA, auth: true) /System/Library/Frameworks/CoreFoundation.framework/CoreFoundation
+    0x218ed9bc8: (diversity: 0x0000, key: IA, auth: true) /System/Library/PrivateFrameworks/DVTInstrumentsFoundation.framework/DVTInstrumentsFoundation
+    0x1e2304f18: (diversity: 0x0000, key: IA, auth: true) GOT
+0x1a81ca71c: _dyld_image_header_containing_address
+    0x1e2304fb0: (diversity: 0x0000, key: IA, auth: true) GOT
+    0x1e23085d0: (diversity: 0x0000, key: IA, auth: true) GOT
+    0x1e2304fb0: (diversity: 0x0000, key: IA, auth: true) GOT
+    0x1e23085d0: (diversity: 0x0000, key: IA, auth: true) GOT
+    0x1e2304fb0: (diversity: 0x0000, key: IA, auth: true) GOT
+<SNIP>    
 ```
 
 ```bash
-❯ ipsw dyld patches dyld_shared_cache -i libdyld.dylib -s _dlopen | head
-   • _dlopen patch locations
-offset: 0x57b18898, addend: 0, diversity: 0x0000, key: IA, auth: true
-offset: 0x57b19170, addend: 0, diversity: 0x0000, key: IA, auth: true
-offset: 0x57b1ec20, addend: 0, diversity: 0x0000, key: IA, auth: true
-offset: 0x57b345f8, addend: 0, diversity: 0x0000, key: IA, auth: true
-offset: 0x57b38a50, addend: 0, diversity: 0x0000, key: IA, auth: true
-offset: 0x57b3cd08, addend: 0, diversity: 0x0000, key: IA, auth: true
-offset: 0x57b3db98, addend: 0, diversity: 0x0000, key: IA, auth: true
-offset: 0x57b79850, addend: 0, diversity: 0x0000, key: IA, auth: true
-offset: 0x57b88138, addend: 0, diversity: 0x0000, key: IA, auth: true
-offset: 0x57bb56a8, addend: 0, diversity: 0x0000, key: IA, auth: true
+❯ ipsw dyld patches dyld_shared_cache_arm64e -i libdyld.dylib -s _dlopen | head
+0x1a81cada8: _dlopen
+    0x1de667530: (diversity: 0x0000, key: IA, auth: true) /System/Library/Frameworks/Foundation.framework/Foundation
+    0x1de6a6880: (diversity: 0x0000, key: IA, auth: true) /System/Library/Frameworks/CoreFoundation.framework/CoreFoundation
+    0x1de6bbed0: (diversity: 0x0000, key: IA, auth: true) /System/Library/Frameworks/CoreGraphics.framework/CoreGraphics
+    0x1de7ac910: (diversity: 0x0000, key: IA, auth: true) /System/Library/Frameworks/SwiftUI.framework/SwiftUI
+    0x1de7e3a88: (diversity: 0x0000, key: IA, auth: true) /System/Library/Frameworks/CoreData.framework/CoreData
+    0x1de816db8: (diversity: 0x0000, key: IA, auth: true) /System/Library/Frameworks/ContactsUI.framework/ContactsUI
+    0x1de84ae68: (diversity: 0x0000, key: IA, auth: true) /System/Library/PrivateFrameworks/AccessibilityUtilities.framework/AccessibilityUtilities
+    0x1de885910: (diversity: 0x0000, key: IA, auth: true) /System/Library/PrivateFrameworks/AppleMediaServices.framework/AppleMediaServices
+    0x1de8e0620: (diversity: 0x0000, key: IA, auth: true) /System/Library/Frameworks/Contacts.framework/Contacts
 ```
 
 ### **dyld slide**
@@ -582,14 +817,65 @@ Dump slide info as JSON
 <SNIP>
 ```
 
+### **dyld str**
+
+Scan _dyld_shared_cache_ for strings
+
+```bash
+❯ ipsw dyld str dyld_shared_cache_arm64e --pattern "fuck"
+```
+
+```
+0x1bae9dfe4: (DialogEngine)	"fucking"
+0x1bae9dff4: (DialogEngine)	"fuckar"
+0x1bae9fc8b: (DialogEngine)	"motherfucker"
+0x1baea059e: (DialogEngine)	"fuckfinger"
+<SNIP>
+0x1e1d8afb8: (DifferentialPrivacy)	"motherfucker"
+0x1e1d8bdd8: (DifferentialPrivacy)	"mindfucker"
+0x1e1d8bdf8: (DifferentialPrivacy)	"mindfuck"
+0x1ec0dcf66: (ResponseKit)	"what the fuck"
+0x2195d9728: (ResponseKit)	"what the fuck"
+<SNIP>
+```
+
+🫢 daaaaang Apple's got a real potty mouth 😏 
+
+:::info note
+The `--pattern` option supports regex and for some reason is the fastest way to search for strings in the cache. I'm not sure why, but it's faster than `str1 == str2` comparison 🤷‍♂️
+:::   
+
+### **dyld swift**
+
+Dump Swift Optimizations Info *(`type` conformances, `foreign` type conformances and `metadata` conformances)*
+
+```bash
+❯ ipsw dyld swift dyld_shared_cache_arm64e --demangle --types
+   • Loading symbol cache file...
+0x4060a8: type_descriptor: 0x4c54ff9c, protocol: 0x118cd50, proto_conformance: 0x4c54ffb8, dylib_objc_index: 707
+    0x1cc54ff9c: T n/a                                                  NewsAnalytics
+    0x18118cd50: P protocol descriptor for CustomDebugStringConvertible libswiftCore.dylib
+    0x1cc54ffb8: C n/a                                                  NewsAnalytics
+0x22ded8: type_descriptor: 0x1414227c, protocol: 0x1189df4, proto_conformance: 0x14142398, dylib_objc_index: 72
+    0x19414227c: T n/a                               libVFXCore.dylib
+    0x181189df4: P protocol descriptor for Equatable libswiftCore.dylib
+    0x194142398: C n/a                               libVFXCore.dylib
+0x22e058: type_descriptor: 0x14142510, protocol: 0x11884fc, proto_conformance: 0x1414259c, dylib_objc_index: 72
+    0x194142510: T n/a                                      libVFXCore.dylib
+<SNIP>    
+```
+
+:::info note
+The `--demangle` option is only avabile on **darwin** hosts for now, as it calls into a dylib.
+:::
+
 ### **dyld a2o**
 
 Convert _dyld_shared_cache_ address to offset
 
 ```bash
-❯ ipsw dyld a2o dyld_shared_cache 1D7B18000
-
-0x053b18000
+❯ ipsw dyld a2o dyld_shared_cache_arm64e 0x1D7B18000
+   • Offset  dec=37994496 ext=".27.dylddata" hex=0x243c000 mapping=__LINKEDIT stubs=false uuid=DC237E9C-4500-345E-8C4B-54F12BE73741
 ```
 
 ### **dyld o2a**
@@ -597,9 +883,9 @@ Convert _dyld_shared_cache_ address to offset
 Convert _dyld_shared_cache_ offset to address
 
 ```bash
-❯ ipsw dyld a2o dyld_shared_cache 0x4C6C0000
-
-0x1ce6c0000
+❯ ipsw dyld o2a dyld_shared_cache_arm64e 0x243c000
+   • dyld4 cache with stub islands detected (will search within dyld_subcache_entry cacheVMOffsets)
+   • Address  dec=6480445440 ext=".01" hex=0x18243c000 mapping=__TEXT stubs=false uuid=836E3AA5-1E8F-38F9-AFC5-60DF76027BAD
 ```
 
 ### **dyld disass**
@@ -614,7 +900,9 @@ Disassemble a function in the _dyld_shared_cache_
    • Parsing ObjC runtime structures...
 ```
 
-> **NOTE:** You can speed up symbol lookups by supplying the `--image` flag or you can use the `--vaddr` flag
+:::info note
+You can speed up symbol lookups by supplying the `--image` flag or you can use the `--vaddr` flag
+:::
 
 ```armasm
 _NSLog:
@@ -645,7 +933,9 @@ _NSLog:
 0x181bac270:  3e 85 93 97	bl	j____stack_chk_fail
 ```
 
-> **NOTE:** Make the output look amazing by adding the `--color` flag 🌈
+:::info note
+Make the output look amazing by adding the `--color` flag 🌈
+:::
 
 ### **dyld imports**
 
@@ -656,39 +946,83 @@ List all dylibs that import/load a given dylib in the _dyld_shared_cache_
 
 JavaScriptCore Imported By:
 ===========================
-/System/Library/Frameworks/WebKit.framework/WebKit
+
+In DSC (Dylibs)
+---------------
+/System/Library/PrivateFrameworks/WebGPU.framework/WebGPU
 /System/Library/PrivateFrameworks/WebCore.framework/WebCore
-/System/Library/PrivateFrameworks/WebBookmarks.framework/WebBookmarks
-/System/Library/PrivateFrameworks/SafariShared.framework/SafariShared
+/System/Library/Frameworks/WebKit.framework/WebKit
 /System/Library/PrivateFrameworks/JetEngine.framework/JetEngine
 /System/Library/Frameworks/SafariServices.framework/SafariServices
-/System/Library/PrivateFrameworks/WebKitLegacy.framework/WebKitLegacy
+/System/Library/PrivateFrameworks/SafariShared.framework/SafariShared
 /System/Library/PrivateFrameworks/SafariSharedUI.framework/SafariSharedUI
-/System/Library/PrivateFrameworks/VideosUI.framework/VideosUI
+/System/Library/PrivateFrameworks/JetUI.framework/JetUI
+/System/Library/PrivateFrameworks/ProVideo.framework/ProVideo
 /System/Library/PrivateFrameworks/StoreKitUI.framework/StoreKitUI
-/System/Library/PrivateFrameworks/iTunesStoreUI.framework/iTunesStoreUI
-/System/Library/PrivateFrameworks/ITMLKit.framework/ITMLKit
-/System/Library/PrivateFrameworks/AppStoreKit.framework/AppStoreKit
 /System/Library/PrivateFrameworks/WorkflowKit.framework/WorkflowKit
-/System/Library/PreferenceBundles/MobileSafariSettings.bundle/MobileSafariSettings
-/System/Library/PrivateFrameworks/ActionKit.framework/ActionKit
-/System/Library/PrivateFrameworks/Cards.framework/Cards
-/System/Library/PrivateFrameworks/CommunicationsSetupUI.framework/CommunicationsSetupUI
-/System/Library/PrivateFrameworks/CoreChart.framework/CoreChart
-/System/Library/PrivateFrameworks/JITAppKit.framework/JITAppKit
-/System/Library/PrivateFrameworks/MailWebProcessSupport.framework/MailWebProcessSupport
-/System/Library/PrivateFrameworks/MetricsKit.framework/MetricsKit
-/System/Library/PrivateFrameworks/RemoteUI.framework/RemoteUI
 /System/Library/PrivateFrameworks/SeymourServices.framework/SeymourServices
-/System/Library/PrivateFrameworks/SlideshowKit.framework/Frameworks/OpusKit.framework/OpusKit
-/System/Library/PrivateFrameworks/TVMLKit.framework/TVMLKit
+/System/Library/Frameworks/VideoSubscriberAccount.framework/VideoSubscriberAccount
+/System/Library/PrivateFrameworks/MobileSafariUI.framework/MobileSafariUI
+/System/Library/PrivateFrameworks/WebKitLegacy.framework/WebKitLegacy
+/System/Library/PrivateFrameworks/AppStoreKit.framework/AppStoreKit
+/System/Library/PrivateFrameworks/AppStoreKitInternal.framework/AppStoreKitInternal
+/System/Library/PrivateFrameworks/ITMLKit.framework/ITMLKit
+/System/Library/PrivateFrameworks/VideosUI.framework/VideosUI
 /System/Library/PrivateFrameworks/TelephonyPreferences.framework/TelephonyPreferences
-/System/Library/PrivateFrameworks/TouchML.framework/TouchML
-/System/Library/PrivateFrameworks/VideoSubscriberAccountUI.framework/VideoSubscriberAccountUI
-/System/Library/PrivateFrameworks/WebApp.framework/WebApp
-/System/Library/PrivateFrameworks/WebInspector.framework/WebInspector
+/System/Library/PrivateFrameworks/CoreChart.framework/CoreChart
+/System/Library/PrivateFrameworks/RemoteUI.framework/RemoteUI
+/System/Library/PrivateFrameworks/MetricsKit.framework/MetricsKit
+/System/Library/PrivateFrameworks/WebBookmarks.framework/WebBookmarks
 /System/Library/PrivateFrameworks/WebUI.framework/WebUI
+/System/Library/PrivateFrameworks/CommunicationsSetupUI.framework/CommunicationsSetupUI
+/System/Library/PrivateFrameworks/TuriCore.framework/TuriCore
+/System/Library/PrivateFrameworks/Cards.framework/Cards
+/System/Library/PrivateFrameworks/WebInspector.framework/WebInspector
+/System/Library/PrivateFrameworks/iTunesStoreUI.framework/iTunesStoreUI
+/System/Library/PrivateFrameworks/MailWebProcessSupport.framework/MailWebProcessSupport
+/System/Library/PrivateFrameworks/JITAppKit.framework/JITAppKit
+/System/Library/PrivateFrameworks/MusicUI.framework/MusicUI
+/System/Library/PrivateFrameworks/TVMLKit.framework/TVMLKit
 /System/Library/PrivateFrameworks/WorkflowEditor.framework/WorkflowEditor
+/System/Library/PrivateFrameworks/MobileSafari.framework/PlugIns/Safari.wkbundle/Safari
+/System/Library/PrivateFrameworks/SlideshowKit.framework/Frameworks/OpusKit.framework/OpusKit
+/System/Library/PrivateFrameworks/AirPlayKit.framework/AirPlayKit
+/System/Library/PrivateFrameworks/TouchML.framework/TouchML
+/System/Library/PrivateFrameworks/ActionKit.framework/ActionKit
+/System/Library/PrivateFrameworks/WebApp.framework/WebApp
+/System/Library/PrivateFrameworks/WebSheet.framework/WebSheet
+/System/Library/PrivateFrameworks/VideoSubscriberAccountUI.framework/VideoSubscriberAccountUI
+
+In FileSystem DMG (Apps)
+------------------------
+/Applications/DataActivation.app/DataActivation
+/Applications/MTLReplayer.app/MTLReplayer
+/Applications/VideoSubscriberAccountViewService.app/VideoSubscriberAccountViewService
+/System/Library/PrivateFrameworks/ActionPredictionHeuristics.framework/XPCServices/HeuristicInterpreter.xpc/HeuristicInterpreter
+/System/Library/PrivateFrameworks/AppStoreComponents.framework/Support/appstorecomponentsd
+/System/Library/PrivateFrameworks/AppleMediaServicesUI.framework/amsengagementd
+/System/Library/PrivateFrameworks/AppleMediaServicesUIDynamic.framework/XPCServices/AppleMediaServicesUIDynamicService.xpc/AppleMediaServicesUIDynamicService
+/System/Library/PrivateFrameworks/VideoSubscriberAccountUI.framework/PlugIns/VideoSubscriberAccountAuthenticationExtension.appex/VideoSubscriberAccountAuthenticationExtension
+/cdhash/0254faebce8593aaefd5db2b95696a33ff3c9880 (/usr/libexec/proactiveeventtrackerd)
+/cdhash/0361ef8633f63f58a344a1f6b44a5883229d11a1 (/Applications/DataActivation.app/DataActivation)
+/cdhash/25ef8201f35f9244c6c8ca460cd894cef7b9b86d (/System/Library/PrivateFrameworks/VideoSubscriberAccountUI.framework/PlugIns/VideoSubscriberAccountAuthenticationExtension.appex/VideoSubscriberAccountAuthenticationExtension)
+/cdhash/3b863c1ce76a2c31a12a8983c80a139a44d67516 (/System/Library/PrivateFrameworks/AppleMediaServicesUIDynamic.framework/XPCServices/AppleMediaServicesUIDynamicService.xpc/AppleMediaServicesUIDynamicService)
+/cdhash/4f9e0310bc4ed6f771eed1bcefa383961edfa57b (/System/Library/PrivateFrameworks/ActionPredictionHeuristics.framework/XPCServices/HeuristicInterpreter.xpc/HeuristicInterpreter)
+/cdhash/52afe0df81978225c8408fb42adbd722f4fcced3 (/System/Library/PrivateFrameworks/AppleMediaServicesUI.framework/amsengagementd)
+/cdhash/83198ea295da0df64f43a5379433448f401a8a52 (/Applications/MTLReplayer.app/MTLReplayer)
+/cdhash/8722d3a31074cf78f16d3d50000c237fffb7072e (/Applications/VideoSubscriberAccountViewService.app/VideoSubscriberAccountViewService)
+/cdhash/d87d78b5f59981e4bcbcf13368cd90985da78b76 (/System/Library/PrivateFrameworks/AppStoreComponents.framework/Support/appstorecomponentsd)
+/usr/libexec/proactiveeventtrackerd
+```
+
+:::info note
+Notice we also got the filesystem's binaries that import that dylib??? That's due to the POWER 💪 of `prebuilt loader sets` 😎
+:::
+
+For a more comprehensive list of imports run
+
+```bash
+❯ ipsw dyld imports --file-system iPhone15,2_16.3_20D47_Restore.ipsw JavaScriptCore
 ```
 
 ### **dyld xref**
@@ -696,26 +1030,51 @@ JavaScriptCore Imported By:
 List all the cross-references in the _dyld_shared_cache_ for a given virtual address
 
 ```bash
-ipsw dyld symaddr dyld_shared_cache_arm64e _NSLog
-0x1817e73e4: (Regular) _NSLog   /System/Library/Frameworks/Foundation.framework/Foundation
+❯ ipsw dyld symaddr dyld_shared_cache_arm64e _NSLog
+0x1813450bc:    (local|regular) _NSLog  Foundation
+0x1813450bc:    (symtab|external|__TEXT.__text) _NSLog  Foundation
 ```
+
+Search the dylib that the symbol is in by default
 
 ```bash
-❯ ipsw dyld xref dyld_shared_cache 0x1817e73e4
-   • Address location          dylib=/System/Library/Frameworks/Foundation.framework/Foundation sym=_NSLog
+❯ ipsw dyld xref dyld_shared_cache_arm64e 0x1813450bc
+   • parsing public symbols...
+   • parsing private symbols...
+   • parsing stub islands...  
+   • Searching for xrefs (use -V for more progess output)
+   • XREFS                     dylib=Foundation sym=_NSLog xrefs=314
 
-XREFS (304)
-===========
-0x181828034: -[__NSConcreteURLComponents percentEncodedHost] + 96
-0x1817ca15c: _NSCountMapTable + 48
-0x1817fc33c: -[NSItemProvider loadDataRepresentationForTypeIdentifier:completionHandler:] + 264
-0x18181a8fc: +[NSString(NSStringOtherEncodings) localizedNameOfStringEncoding:] + 84
-0x181760ef0: -[NSCharacterSet mutableCopyWithZone:] + 60
-0x181790fcc: _NSFreeHashTable + 48
-0x181791244: _NSHashInsertKnownAbsent + 52
-0x1817c9b70: _NSEnumerateMapTable + 56
+0x1818e4d8c: -[NSFileVersion setResolved:] + 120
+0x1812a5228: -[NSString rangeOfString:options:range:locale:] + 196
+0x1818e2400: ___36-[NSFileSubarbitrationClaim granted]_block_invoke.71 + 20
+0x1817f3b8c: ___52-[NSExtensionItem _matchingDictionaryRepresentation]_block_invoke + 440
+0x181330ad4: -[NSFileCoordinator(NSPrivate) _blockOnAccessClaim:withAccessArbiter:] + 320
+0x18137e384: ___51-[NSBackgroundActivityScheduler scheduleWithBlock:]_block_invoke + 400
+0x1818259b0: -[NSPlaceholderMutableString initWithCString:encoding:] + 124
+0x181869b70: -[__NSConcreteURLComponents setPercentEncodedQueryItems:] + 304
+0x1812b88e0: -[NSPlaceholderString initWithBytes:length:encoding:] + 112
+0x1813036a8: -[NSString(NSPathUtilities) stringByAppendingPathExtension:] + 532
+0x181874ad4: -[NSPlaceholderValue getValue:] + 36
+0x18188c088: -[NSCorrectionCheckingResult initWithCoder:] + 264
+0x1812fd1e8: -[NSThread start] + 260
+0x1817d48f8: -[NSMutableCharacterSet invert] + 60
+0x1817cb6f8: -[NSBigMutableString _createSubstringWithRange:] + 156
+0x181808e84: ___62-[NSURL(NSURLPromisedItems) _valueFromFaultDictionary:forKey:]_block_invoke + 112
+0x1818257bc: -[NSPlaceholderMutableString initWithBytesNoCopy:length:encoding:freeWhenDone:] + 104
+0x181838c80: +[NSMessagePort sendBeforeTime:streamData:components:to:from:msgid:reserved:] + 476
 <SNIP>
 ```
+:::info note
+- To search ALL dylibs, use the `--all` flag  
+- To search a specific dylib, use the `--image` flag  
+- To search all other dylibs that import the dylib that contains the symbol/address, use the `--imports` flag  
+
+:::
+
+:::info
+This is one of `ipsw`'s MOST powerful commands and is getting better all the time.  Check back periodically and see what's new!
+:::
 
 ### **dyld tbd**
 
@@ -745,7 +1104,7 @@ First print the MachO header for `CoreData` in a cache
 
 ```bash
 ❯ ipsw dyld macho dyld_shared_cache_arm64e CoreData | grep "__DATA_CONST.__got"
-        sz="0x000002d8" off=0x502c2428-0x502c2700 addr="0x1d22c2428"-0x1d22c2700            __DATA_CONST.__got               (NonLazySymbolPointers)
+   sz="0x000002d8" off=0x502c2428-0x502c2700 addr="0x1d22c2428"-0x1d22c2700   __DATA_CONST.__got
 ```
 
 Hexdump the section `__DATA_CONST.__got`
@@ -785,18 +1144,19 @@ Or dump the section as a list of pointers
 Lookup those pointers in the cache
 
 ```bash
-❯ ipsw dyld dump dyld_shared_cache_arm64e 0x1d22c2428 --size 728 --addr | xargs -I {} /bin/zsh -c 'ipsw dyld a2s dyld_shared_cache_arm64e {}'
+❯ ipsw dyld dump dyld_shared_cache_arm64e 0x1d22c2428 --size 728 --addr \
+               | xargs -I {} /bin/zsh -c 'ipsw dyld a2s dyld_shared_cache_arm64e {}'
 
-   • Address location          dylib=/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation section=__DATA_CONST.__const
+   • Address dylib=CoreFoundation section=__DATA_CONST.__const
 0x1d9a84600: _NSCalendarIdentifierGregorian
 
-   • Address location          dylib=/System/Library/Frameworks/Foundation.framework/Foundation section=__DATA_CONST.__const
+   • Address dylib=Foundation section=__DATA_CONST.__const
 0x1d9a8ba90: _NSCocoaErrorDomain
 
-   • Address location          dylib=/System/Library/Frameworks/Foundation.framework/Foundation section=__DATA.__common
+   • Address dylib=Foundation section=__DATA.__common
 0x1d6d83b52: _NSDeallocateZombies
 
-   • Address location          dylib=/System/Library/Frameworks/Foundation.framework/Foundation section=__DATA_CONST.__const
+   • Address dylib=/Foundation section=__DATA_CONST.__const
 0x1d9a8ba20: _NSFilePathErrorKey
 
 <SNIP>
@@ -822,4 +1182,24 @@ Or write to a file for later post-processing
 00000080  c0 3d a8 d9 01 00 08 00  68 be a8 d9 01 00 08 00  |.=......h.......|
 00000090  70 be a8 d9 01 00 08 00  78 be a8 d9 01 00 08 00  |p.......x.......|
 <SNIP>
+```
+
+To dump a section from a dylib in the _dyld_shared_cache_
+
+```bash
+❯ ipsw dyld dump dyld_shared_cache --image JavaScriptCore --section __TEXT.__cstring --size 208
+   • Address location          dylib=JavaScriptCore section=__TEXT.__cstring
+000000019ba27290:  41 70 70 72 6f 78 69 6d  61 74 65 28 00 20 73 65  |Approximate(. se|
+000000019ba272a0:  63 29 00 4e 4f 54 20 49  4d 50 4c 45 4d 45 4e 54  |c).NOT IMPLEMENT|
+000000019ba272b0:  45 44 20 59 45 54 0a 00  41 53 53 45 52 54 49 4f  |ED YET..ASSERTIO|
+000000019ba272c0:  4e 20 46 41 49 4c 45 44  3a 20 25 73 0a 00 53 48  |N FAILED: %s..SH|
+000000019ba272d0:  4f 55 4c 44 20 4e 45 56  45 52 20 42 45 20 52 45  |OULD NEVER BE RE|
+000000019ba272e0:  41 43 48 45 44 0a 00 41  53 53 45 52 54 49 4f 4e  |ACHED..ASSERTION|
+000000019ba272f0:  20 46 41 49 4c 45 44 3a  20 00 0a 25 73 0a 00 41  | FAILED: ..%s..A|
+000000019ba27300:  52 47 55 4d 45 4e 54 20  42 41 44 3a 20 25 73 2c  |RGUMENT BAD: %s,|
+000000019ba27310:  20 25 73 0a 00 00 46 41  54 41 4c 20 45 52 52 4f  | %s...FATAL ERRO|
+000000019ba27320:  52 3a 20 00 0a 00 55 6e  6b 6e 6f 77 6e 20 6c 6f  |R: ...Unknown lo|
+000000019ba27330:  67 67 69 6e 67 20 6c 65  76 65 6c 3a 20 25 73 00  |gging level: %s.|
+000000019ba27340:  55 6e 6b 6e 6f 77 6e 20  6c 6f 67 67 69 6e 67 20  |Unknown logging |
+000000019ba27350:  63 68 61 6e 6e 65 6c 3a  20 25 73 00 25 40 00 25  |channel: %s.%@.%|
 ```

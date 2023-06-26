@@ -15,50 +15,50 @@ import (
 const tagPtrMask = 0xffff000000000000
 
 type PrelinkInfo struct {
-	PrelinkInfoDictionary []CFBundle `plist:"_PrelinkInfoDictionary,omitempty"`
+	PrelinkInfoDictionary []CFBundle `plist:"_PrelinkInfoDictionary,omitempty" json:"prelink_info_dictionary,omitempty"`
 }
 
 type CFBundle struct {
-	ID   string `plist:"CFBundleIdentifier,omitempty"`
-	Name string `plist:"CFBundleName,omitempty"`
+	ID   string `plist:"CFBundleIdentifier,omitempty" json:"id,omitempty"`
+	Name string `plist:"CFBundleName,omitempty" json:"name,omitempty"`
 
-	SDK                 string   `plist:"DTSDKName,omitempty"`
-	SDKBuild            string   `plist:"DTSDKBuild,omitempty"`
-	Xcode               string   `plist:"DTXcode,omitempty"`
-	XcodeBuild          string   `plist:"DTXcodeBuild,omitempty"`
-	Copyright           string   `plist:"NSHumanReadableCopyright,omitempty"`
-	BuildMachineOSBuild string   `plist:"BuildMachineOSBuild,omitempty"`
-	DevelopmentRegion   string   `plist:"CFBundleDevelopmentRegion,omitempty"`
-	PlatformName        string   `plist:"DTPlatformName,omitempty"`
-	PlatformVersion     string   `plist:"DTPlatformVersion,omitempty"`
-	PlatformBuild       string   `plist:"DTPlatformBuild,omitempty"`
-	PackageType         string   `plist:"CFBundlePackageType,omitempty"`
-	Version             string   `plist:"CFBundleVersion,omitempty"`
-	ShortVersionString  string   `plist:"CFBundleShortVersionString,omitempty"`
-	CompatibleVersion   string   `plist:"OSBundleCompatibleVersion,omitempty"`
-	MinimumOSVersion    string   `plist:"MinimumOSVersion,omitempty"`
-	SupportedPlatforms  []string `plist:"CFBundleSupportedPlatforms,omitempty"`
-	Signature           string   `plist:"CFBundleSignature,omitempty"`
+	SDK                 string   `plist:"DTSDKName,omitempty" json:"sdk,omitempty"`
+	SDKBuild            string   `plist:"DTSDKBuild,omitempty" json:"sdk_build,omitempty"`
+	Xcode               string   `plist:"DTXcode,omitempty" json:"xcode,omitempty"`
+	XcodeBuild          string   `plist:"DTXcodeBuild,omitempty" json:"xcode_build,omitempty"`
+	Copyright           string   `plist:"NSHumanReadableCopyright,omitempty" json:"copyright,omitempty"`
+	BuildMachineOSBuild string   `plist:"BuildMachineOSBuild,omitempty" json:"build_machine_os_build,omitempty"`
+	DevelopmentRegion   string   `plist:"CFBundleDevelopmentRegion,omitempty" json:"development_region,omitempty"`
+	PlatformName        string   `plist:"DTPlatformName,omitempty" json:"platform_name,omitempty"`
+	PlatformVersion     string   `plist:"DTPlatformVersion,omitempty" json:"platform_version,omitempty"`
+	PlatformBuild       string   `plist:"DTPlatformBuild,omitempty" json:"platform_build,omitempty"`
+	PackageType         string   `plist:"CFBundlePackageType,omitempty" json:"package_type,omitempty"`
+	Version             string   `plist:"CFBundleVersion,omitempty" json:"version,omitempty"`
+	ShortVersionString  string   `plist:"CFBundleShortVersionString,omitempty" json:"short_version_string,omitempty"`
+	CompatibleVersion   string   `plist:"OSBundleCompatibleVersion,omitempty" json:"compatible_version,omitempty"`
+	MinimumOSVersion    string   `plist:"MinimumOSVersion,omitempty" json:"minimum_os_version,omitempty"`
+	SupportedPlatforms  []string `plist:"CFBundleSupportedPlatforms,omitempty" json:"supported_platforms,omitempty"`
+	Signature           string   `plist:"CFBundleSignature,omitempty" json:"signature,omitempty"`
 
-	IOKitPersonalities map[string]interface{} `plist:"IOKitPersonalities,omitempty"`
-	OSBundleLibraries  map[string]string      `plist:"OSBundleLibraries,omitempty"`
-	UIDeviceFamily     []int                  `plist:"UIDeviceFamily,omitempty"`
+	IOKitPersonalities map[string]interface{} `plist:"IOKitPersonalities,omitempty" json:"io_kit_personalities,omitempty"`
+	OSBundleLibraries  map[string]string      `plist:"OSBundleLibraries,omitempty" json:"os_bundle_libraries,omitempty"`
+	UIDeviceFamily     []int                  `plist:"UIDeviceFamily,omitempty" json:"ui_device_family,omitempty"`
 
-	OSBundleRequired             string   `plist:"OSBundleRequired,omitempty"`
-	UIRequiredDeviceCapabilities []string `plist:"UIRequiredDeviceCapabilities,omitempty"`
+	OSBundleRequired             string   `plist:"OSBundleRequired,omitempty" json:"os_bundle_required,omitempty"`
+	UIRequiredDeviceCapabilities []string `plist:"UIRequiredDeviceCapabilities,omitempty" json:"ui_required_device_capabilities,omitempty"`
 
-	AppleSecurityExtension bool `plist:"AppleSecurityExtension,omitempty"`
+	AppleSecurityExtension bool `plist:"AppleSecurityExtension,omitempty" json:"apple_security_extension,omitempty"`
 
-	InfoDictionaryVersion string `plist:"CFBundleInfoDictionaryVersion,omitempty"`
-	OSKernelResource      bool   `plist:"OSKernelResource,omitempty"`
-	GetInfoString         string `plist:"CFBundleGetInfoString,omitempty"`
-	AllowUserLoad         bool   `plist:"OSBundleAllowUserLoad,omitempty"`
-	ExecutableLoadAddr    uint64 `plist:"_PrelinkExecutableLoadAddr,omitempty"`
+	InfoDictionaryVersion string `plist:"CFBundleInfoDictionaryVersion,omitempty" json:"info_dictionary_version,omitempty"`
+	OSKernelResource      bool   `plist:"OSKernelResource,omitempty" json:"os_kernel_resource,omitempty"`
+	GetInfoString         string `plist:"CFBundleGetInfoString,omitempty" json:"get_info_string,omitempty"`
+	AllowUserLoad         bool   `plist:"OSBundleAllowUserLoad,omitempty" json:"allow_user_load,omitempty"`
+	ExecutableLoadAddr    uint64 `plist:"_PrelinkExecutableLoadAddr,omitempty" json:"executable_load_addr,omitempty"`
 
-	ModuleIndex  uint64 `plist:"ModuleIndex,omitempty"`
-	Executable   string `plist:"CFBundleExecutable,omitempty"`
-	BundlePath   string `plist:"_PrelinkBundlePath,omitempty"`
-	RelativePath string `plist:"_PrelinkExecutableRelativePath,omitempty"`
+	ModuleIndex  uint64 `plist:"ModuleIndex,omitempty" json:"module_index,omitempty"`
+	Executable   string `plist:"CFBundleExecutable,omitempty" json:"executable,omitempty"`
+	BundlePath   string `plist:"_PrelinkBundlePath,omitempty" json:"bundle_path,omitempty"`
+	RelativePath string `plist:"_PrelinkExecutableRelativePath,omitempty" json:"relative_path,omitempty"`
 }
 
 type KmodInfoT struct {
@@ -147,22 +147,8 @@ func GetKextInfos(m *macho.File) ([]KmodInfoT, error) {
 	return nil, fmt.Errorf("section __PRELINK_INFO.__kmod_start not found")
 }
 
-// KextList lists all the kernel extensions in the kernelcache
-func KextList(kernel string, diffable bool) ([]string, error) {
-	var out []string
-
-	m, err := macho.Open(kernel)
-	if err != nil {
-		return nil, err
-	}
-	defer m.Close()
-
-	kextStartAdddrs, err := GetKextStartVMAddrs(m)
-	if err != nil {
-		log.Debugf("failed to get kext start addresses: %v", err)
-	}
-
-	if infoSec := m.Section("__PRELINK_INFO", "__info"); infoSec != nil {
+func GetKexts(kernel *macho.File) ([]CFBundle, error) {
+	if infoSec := kernel.Section("__PRELINK_INFO", "__info"); infoSec != nil {
 
 		data, err := infoSec.Data()
 		if err != nil {
@@ -175,18 +161,41 @@ func KextList(kernel string, diffable bool) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to decode __PRELINK_INFO.__info section: %v", err)
 		}
+		return prelink.PrelinkInfoDictionary, nil
+	}
+	return nil, fmt.Errorf("section __PRELINK_INFO.__info not found")
+}
 
-		if diffable {
-			for _, bundle := range prelink.PrelinkInfoDictionary {
-				out = append(out, fmt.Sprintf("%s (%s)", bundle.ID, bundle.Version))
-			}
-		} else {
-			for _, bundle := range prelink.PrelinkInfoDictionary {
-				if !bundle.OSKernelResource && len(kextStartAdddrs) > 0 {
-					out = append(out, fmt.Sprintf("%#x: %s (%s)", kextStartAdddrs[bundle.ModuleIndex]|tagPtrMask, bundle.ID, bundle.Version))
-				} else {
-					out = append(out, fmt.Sprintf("%#x: %s (%s)", bundle.ExecutableLoadAddr, bundle.ID, bundle.Version))
-				}
+// KextList lists all the kernel extensions in the kernelcache
+func KextList(kernelPath string, diffable bool) ([]string, error) {
+	var out []string
+
+	m, err := macho.Open(kernelPath)
+	if err != nil {
+		return nil, err
+	}
+	defer m.Close()
+
+	bundles, err := GetKexts(m)
+	if err != nil {
+		return nil, err
+	}
+
+	kextStartAdddrs, err := GetKextStartVMAddrs(m)
+	if err != nil {
+		log.Debugf("failed to get kext start addresses: %v", err)
+	}
+
+	if diffable {
+		for _, bundle := range bundles {
+			out = append(out, fmt.Sprintf("%s (%s)", bundle.ID, bundle.Version))
+		}
+	} else {
+		for _, bundle := range bundles {
+			if !bundle.OSKernelResource && len(kextStartAdddrs) > 0 {
+				out = append(out, fmt.Sprintf("%#x: %s (%s)", kextStartAdddrs[bundle.ModuleIndex]|tagPtrMask, bundle.ID, bundle.Version))
+			} else {
+				out = append(out, fmt.Sprintf("%#x: %s (%s)", bundle.ExecutableLoadAddr, bundle.ID, bundle.Version))
 			}
 		}
 	}

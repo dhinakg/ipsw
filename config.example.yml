@@ -1,0 +1,15 @@
+# This is an example config.yml file with some sensible defaults.
+# Make sure to check the documentation at https://blacktop.github.io/ipsw
+daemon:
+  host:
+  port: 3993
+  # socket: /tmp/ipsw.sock
+  debug: false
+  # logfile: /var/log/ipswd.log
+database:
+  # driver: sqlite3
+  # dsn: /var/lib/ipswd/ipswd.db
+# The lines beneath this are called `modelines`. See `:help modeline`
+# Feel free to remove those if you don't want/use them.
+# yaml-language-server: $schema=https://blacktop.github.io/ipsw/static/schema.json
+# vim: set ts=2 sw=2 tw=0 fo=cnqoj

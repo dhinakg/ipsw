@@ -5,9 +5,6 @@ hide_title: true
 hide_table_of_contents: true
 sidebar_label: wiki
 description: Download old(er) IPSWs from theiphonewiki.com
-last_update:
-  date: 2023-01-10T12:52:46-07:00
-  author: blacktop
 ---
 ## ipsw download wiki
 
@@ -24,11 +21,14 @@ ipsw download wiki [flags]
       --db string        Path to local JSON database (will use CWD by default) (default "wiki_db.json")
   -f, --flat             Do NOT perserve directory structure when downloading with --pattern
   -h, --help             help for wiki
+      --ipsw             Download IPSWs
       --json             Parse URLs and store metadata in local JSON database
       --kernel           Extract kernelcache from remote IPSW
-      --ota              Download OTAs 🚧
+      --ota              Download OTAs
   -o, --output string    Folder to download files to
       --pattern string   Download remote files that match regex
+      --pb string        OTA prerequisite build
+      --pv string        OTA prerequisite version
 ```
 
 ### Options inherited from parent commands
@@ -37,7 +37,7 @@ ipsw download wiki [flags]
       --black-list stringArray   iOS device black list
   -b, --build string             iOS BuildID (i.e. 16F203)
       --color                    colorize output
-      --config string            config file (default is $HOME/.ipsw/config.yaml)
+      --config string            config file (default is $HOME/.config/ipsw/config.yaml)
   -y, --confirm                  do not prompt user for confirmation
   -d, --device string            iOS Device (i.e. iPhone11,2)
       --insecure                 do not verify ssl certs

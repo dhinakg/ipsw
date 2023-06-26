@@ -1,5 +1,5 @@
 /*
-Copyright © 2022 blacktop
+Copyright © 2018-2023 blacktop
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -29,13 +29,13 @@ import (
 	"path/filepath"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/apex/log"
 	"github.com/blacktop/go-plist"
 	"github.com/blacktop/ipsw/internal/utils"
 	"github.com/blacktop/ipsw/pkg/info"
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 )
 
 type typeDecl struct {
@@ -56,6 +56,7 @@ func init() {
 // mdevsCmd represents the mdevs command
 var mdevsCmd = &cobra.Command{
 	Use:           "mdevs",
+	Aliases:       []string{"md", "mobiledevices"},
 	Short:         "List all MobileDevices in IPSW",
 	SilenceUsage:  true,
 	SilenceErrors: true,
@@ -65,7 +66,7 @@ var mdevsCmd = &cobra.Command{
 	},
 	RunE: func(cmd *cobra.Command, args []string) error {
 
-		if viper.GetBool("verbose") {
+		if Verbose {
 			log.SetLevel(log.DebugLevel)
 		}
 
@@ -81,50 +82,70 @@ var mdevsCmd = &cobra.Command{
 			return fmt.Errorf("failed to get filesystem DMG: %v", err)
 		}
 
-		// extract filesystem DMG
-		dmgs, err := utils.Unzip(ipswPath, "", func(f *zip.File) bool {
-			return strings.EqualFold(filepath.Base(f.Name), dmgPath)
-		})
-		if err != nil {
-			return fmt.Errorf("failed to extract %s from IPSW: %v", dmgPath, err)
+		// check if filesystem DMG already exists (due to previous mount command)
+		if _, err := os.Stat(dmgPath); os.IsNotExist(err) {
+			// extract filesystem DMG
+			dmgs, err := utils.Unzip(ipswPath, "", func(f *zip.File) bool {
+				return strings.EqualFold(filepath.Base(f.Name), dmgPath)
+			})
+			if err != nil {
+				return fmt.Errorf("failed to extract %s from IPSW: %v", dmgPath, err)
+			}
+			if len(dmgs) == 0 {
+				return fmt.Errorf("failed to find %s in IPSW", dmgPath)
+			}
+			defer os.Remove(dmgs[0])
+		} else {
+			log.Debugf("Found extracted %s", dmgPath)
 		}
-		if len(dmgs) == 0 {
-			return fmt.Errorf("failed to find %s in IPSW", dmgPath)
-		}
-		defer os.Remove(dmgs[0])
-
 		// mount filesystem DMG
-		utils.Indent(log.Info, 2)(fmt.Sprintf("Mounting %s", dmgs[0]))
-		mountPoint, err := utils.MountFS(dmgs[0])
+		log.Debugf("Mounting %s", dmgPath)
+		mountPoint, alreadyMounted, err := utils.MountDMG(dmgPath)
 		if err != nil {
 			return fmt.Errorf("failed to mount DMG: %v", err)
 		}
-		defer func() {
-			utils.Indent(log.Info, 2)(fmt.Sprintf("Unmounting %s", dmgs[0]))
-			if err := utils.Unmount(mountPoint, false); err != nil {
-				log.Errorf("failed to unmount DMG at %s: %v", dmgs[0], err)
-			}
-		}()
+		if alreadyMounted {
+			utils.Indent(log.Debug, 2)(fmt.Sprintf("%s already mounted", dmgPath))
+		} else {
+			defer func() {
+				log.Debugf("Unmounting %s", dmgPath)
+				if err := utils.Retry(3, 2*time.Second, func() error {
+					return utils.Unmount(mountPoint, false)
+				}); err != nil {
+					log.Errorf("failed to unmount %s at %s: %v", dmgPath, mountPoint, err)
+				}
+			}()
+		}
 
 		pattern := filepath.Join(mountPoint, "System/Library/CoreServices/CoreTypes.bundle/Contents/Library/MobileDevice*")
 		mobileDevices, err := filepath.Glob(pattern)
 		if err != nil {
 			return fmt.Errorf("failed to glob MobileDevices: %v", err)
 		}
-		if len(mobileDevices) == 0 { // try the host macOS
-			mobileDevices, err = filepath.Glob("/System/Library/CoreServices/CoreTypes.bundle/Contents/Library/MobileDevices*")
+		if len(mobileDevices) == 0 { // try NEW pattern
+			pattern = filepath.Join(mountPoint, "System/Library/Templates/Data/System/Library/CoreServices/CoreTypes.bundle/Contents/Library/MobileDevices*")
+			mobileDevices, err = filepath.Glob(pattern)
 			if err != nil {
 				return fmt.Errorf("failed to glob MobileDevices: %v", err)
+			}
+			if len(mobileDevices) == 0 { // try the host macOS
+				mobileDevices, err = filepath.Glob("/System/Library/CoreServices/CoreTypes.bundle/Contents/Library/MobileDevices*")
+				if err != nil {
+					return fmt.Errorf("failed to glob MobileDevices: %v", err)
+				}
 			}
 		}
 
 		for _, mobileDevice := range mobileDevices {
-			fmt.Println(mobileDevice)
-			dat, err := os.ReadFile(filepath.Join(mobileDevice, "Info.plist"))
+			log.Info(mobileDevice)
+			infoPlistPath := filepath.Join(mobileDevice, "Info.plist")
+			if _, err := os.Stat(infoPlistPath); os.IsNotExist(err) {
+				infoPlistPath = filepath.Join(mobileDevice, "Contents/Info.plist")
+			}
+			dat, err := os.ReadFile(infoPlistPath)
 			if err != nil {
 				return fmt.Errorf("failed to read Info.plist: %v", err)
 			}
-			// var ting any
 			var md MobileDevice
 			if err := plist.NewDecoder(bytes.NewReader(dat)).Decode(&md); err != nil {
 				return fmt.Errorf("failed to decode Info.plist: %v", err)

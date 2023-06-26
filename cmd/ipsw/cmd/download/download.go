@@ -1,5 +1,5 @@
 /*
-Copyright © 2018-2022 blacktop
+Copyright © 2018-2023 blacktop
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -204,12 +204,14 @@ func getDestName(url string, removeCommas bool) string {
 
 // DownloadCmd represents the download command
 var DownloadCmd = &cobra.Command{
-	Use:   "download",
-	Short: "Download Apple Firmware files (and more)",
-	Args:  cobra.NoArgs,
+	Use:     "download",
+	Aliases: []string{"dl"},
+	Short:   "Download Apple Firmware files (and more)",
+	Args:    cobra.NoArgs,
 	PersistentPreRun: func(cmd *cobra.Command, args []string) {
 		viper.BindPFlag("color", cmd.Flags().Lookup("color"))
 		viper.BindPFlag("verbose", cmd.Flags().Lookup("verbose"))
+		viper.BindPFlag("diff-tool", cmd.Flags().Lookup("diff-tool"))
 	},
 	Run: func(cmd *cobra.Command, args []string) {
 		cmd.Help()

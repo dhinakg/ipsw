@@ -5,9 +5,6 @@ hide_title: true
 hide_table_of_contents: true
 sidebar_label: webkit
 description: Get WebKit version from a dyld_shared_cache
-last_update:
-  date: 2023-01-10T12:52:46-07:00
-  author: blacktop
 ---
 ## ipsw dyld webkit
 
@@ -21,9 +18,11 @@ ipsw dyld webkit <dyld_shared_cache> [flags]
 
 ```
   -a, --api string     Github API Token
+  -d, --diff           Diff two dyld_shared_cache files
   -g, --git            Lookup git tag on github.com
   -h, --help           help for webkit
       --insecure       do not verify ssl certs
+  -j, --json           Output as JSON
       --proxy string   HTTP/HTTPS proxy
   -r, --rev            Lookup svn rev on trac.webkit.org
 ```
@@ -32,7 +31,7 @@ ipsw dyld webkit <dyld_shared_cache> [flags]
 
 ```
       --color           colorize output
-      --config string   config file (default is $HOME/.ipsw/config.yaml)
+      --config string   config file (default is $HOME/.config/ipsw/config.yaml)
   -V, --verbose         verbose output
 ```
 

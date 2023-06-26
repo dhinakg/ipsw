@@ -5,9 +5,6 @@ hide_title: true
 hide_table_of_contents: true
 sidebar_label: info
 description: Parse dyld_shared_cache
-last_update:
-  date: 2023-01-10T12:52:46-07:00
-  author: blacktop
 ---
 ## ipsw dyld info
 
@@ -21,6 +18,7 @@ ipsw dyld info <dyld_shared_cache> [flags]
 
 ```
   -c, --closures   Dump program launch closures
+      --delta      Delta two DSC's image's versions
       --diff       Diff two DSC's images
   -d, --dlopen     Dump all dylibs and bundles with dlopen closures
   -l, --dylibs     List dylibs and their versions
@@ -33,7 +31,7 @@ ipsw dyld info <dyld_shared_cache> [flags]
 
 ```
       --color           colorize output
-      --config string   config file (default is $HOME/.ipsw/config.yaml)
+      --config string   config file (default is $HOME/.config/ipsw/config.yaml)
   -V, --verbose         verbose output
 ```
 

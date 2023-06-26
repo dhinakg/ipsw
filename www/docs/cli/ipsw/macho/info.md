@@ -5,9 +5,6 @@ hide_title: true
 hide_table_of_contents: true
 sidebar_label: info
 description: Explore a MachO file
-last_update:
-  date: 2023-01-10T12:52:46-07:00
-  author: blacktop
 ---
 ## ipsw macho info
 
@@ -22,6 +19,7 @@ ipsw macho info <macho> [flags]
 ```
   -z, --all-fileset-entries     Parse all fileset entries
   -a, --arch string             Which architecture to use for fat/universal MachO
+  -b, --bit-code                Dump the LLVM bitcode
       --dump-cert               Dump the certificate
   -e, --ent                     Print entitlements
   -x, --extract-fileset-entry   Extract the fileset entry
@@ -32,12 +30,13 @@ ipsw macho info <macho> [flags]
   -j, --json                    Print the TOC as JSON
   -l, --loads                   Print the load commands
   -o, --objc                    Print ObjC info
-  -r, --objc-refs               Print ObjC references
+      --objc-refs               Print ObjC references
       --output string           Directory to extract files to
   -s, --sig                     Print code signature
   -g, --split-seg               Print split seg info
   -f, --starts                  Print function starts
   -c, --strings                 Print cstrings
+  -w, --swift                   🚧 Print Swift info
   -n, --symbols                 Print symbols
 ```
 
@@ -45,7 +44,7 @@ ipsw macho info <macho> [flags]
 
 ```
       --color           colorize output
-      --config string   config file (default is $HOME/.ipsw/config.yaml)
+      --config string   config file (default is $HOME/.config/ipsw/config.yaml)
   -V, --verbose         verbose output
 ```
 

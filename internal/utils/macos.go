@@ -1,8 +1,10 @@
 package utils
 
 import (
+	"archive/zip"
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,9 +13,11 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/apex/log"
 	"github.com/blacktop/go-plist"
+	"github.com/blacktop/ipsw/internal/utils/lsof"
 )
 
 // Cp copies a file from src to dest
@@ -333,7 +337,7 @@ func GetBuildInfo() (*BuildInfo, error) {
 			return nil, fmt.Errorf("%v: %s", err, out)
 		}
 
-		binfo.ProductNames = string(out)
+		binfo.ProductNames = strings.TrimSuffix(string(out), "\n")
 
 		cmd = exec.Command("/usr/bin/sw_vers", "-productVersion")
 		out, err = cmd.CombinedOutput()
@@ -341,7 +345,7 @@ func GetBuildInfo() (*BuildInfo, error) {
 			return nil, fmt.Errorf("%v: %s", err, out)
 		}
 
-		binfo.ProductVersion = string(out)
+		binfo.ProductVersion = strings.TrimSuffix(string(out), "\n")
 
 		cmd = exec.Command("/usr/bin/sw_vers", "-buildVersion")
 		out, err = cmd.CombinedOutput()
@@ -349,60 +353,100 @@ func GetBuildInfo() (*BuildInfo, error) {
 			return nil, fmt.Errorf("%v: %s", err, out)
 		}
 
-		binfo.BuildVersion = string(out)
+		binfo.BuildVersion = strings.TrimSuffix(string(out), "\n")
 
 		return &binfo, nil
 	}
 	return nil, fmt.Errorf("only supported on macOS")
 }
 
+func GetKernelCollectionPath() (string, error) {
+	if runtime.GOOS == "darwin" {
+		defaultKcPath := "/System/Library/KernelCollections/BootKernelExtensions.kc"
+		if runtime.GOARCH == "amd64" {
+			return defaultKcPath, nil
+		}
+		cmd := exec.Command("sysctl", "-n", "kern.bootobjectspath")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return defaultKcPath, nil
+		}
+		return filepath.Join("/System/Volumes/Preboot", strings.TrimSpace(string(out)), "System/Library/Caches/com.apple.kernelcaches/kernelcache"), nil
+	}
+	return "", fmt.Errorf("only supported on macOS")
+}
+
+var ErrMountResourceBusy = errors.New("hdiutil: mount failed - Resource busy")
+
 // Mount mounts a DMG with hdiutil
 func Mount(image, mountPoint string) error {
 	if runtime.GOOS == "darwin" {
-		cmd := exec.Command("/usr/bin/hdiutil", "attach", "-noverify", "-mountpoint", mountPoint, image)
-
-		out, err := cmd.CombinedOutput()
+		out, err := exec.Command("/usr/bin/hdiutil", "attach", "-noverify", "-mountpoint", mountPoint, image).CombinedOutput()
 		if err != nil {
+			if strings.Contains(string(out), "hdiutil: mount failed - Resource busy") {
+				return ErrMountResourceBusy
+			}
 			return fmt.Errorf("%v: %s", err, out)
 		}
-
-		return nil
-
-	} else if runtime.GOOS == "linux" {
-		cmd := exec.Command("apfs-fuse", image, mountPoint)
-
-		out, err := cmd.CombinedOutput()
+	} else {
+		out, err := exec.Command("apfs-fuse", image, mountPoint).CombinedOutput()
 		if err != nil {
+			if _, lperr := exec.LookPath("apfs-fuse"); err != nil {
+				return fmt.Errorf("utils.Mount: 'apfs-fuse' not found (required on non-darwin systems): %v: %v: %s", lperr, err, out)
+			}
 			return fmt.Errorf("%v: %s", err, out)
 		}
-
-		return nil
 	}
 
 	return nil
 }
 
-func MountFS(image string) (string, error) {
-	var mountPoint string
+func IsAlreadyMounted(image, mountPoint string) (string, bool, error) {
 	if runtime.GOOS == "darwin" {
-		mountPoint = fmt.Sprintf("/tmp/%s.mount", filepath.Base(image))
-	} else {
-		if _, ok := os.LookupEnv("IPSW_IN_DOCKER"); ok {
-			// Create in-docker mount point
-			os.MkdirAll("/data", 0750)
-			mountPoint = "/mnt"
-		} else {
-			// Create temporary non-darwin mount point
-			mountPoint = image + "_temp_mount"
-			if err := os.Mkdir(mountPoint, 0750); err != nil {
-				return "", fmt.Errorf("failed to create temporary mount point %s: %v", mountPoint, err)
+		info, err := MountInfo()
+		if err != nil {
+			return "", false, err
+		}
+		for _, i := range info.Images {
+			if strings.Contains(i.ImagePath, image) {
+				for _, entry := range i.SystemEntities {
+					if entry.MountPoint != "" {
+						return entry.MountPoint, true, nil
+					}
+				}
+				return "", true, nil
 			}
 		}
+	} else if runtime.GOOS == "linux" {
+		if _, err := os.Stat(filepath.Join(mountPoint, "root")); !os.IsNotExist(err) {
+			return mountPoint, true, nil
+		}
 	}
+	return "", false, nil
+}
+
+func MountDMG(image string) (string, bool, error) {
+	mountPoint := fmt.Sprintf("/tmp/%s.mount", filepath.Base(image))
+
+	if runtime.GOOS == "darwin" {
+		// check if already mounted
+		if prevMountPoint, mounted, err := IsAlreadyMounted(image, mountPoint); mounted && err == nil {
+			if prevMountPoint != "" {
+				mountPoint = prevMountPoint
+			}
+			return mountPoint, true, nil
+		}
+	} else {
+		if err := os.MkdirAll(mountPoint, 0750); err != nil {
+			return "", false, fmt.Errorf("failed to create temporary mount point %s: %v", mountPoint, err)
+		}
+	}
+
 	if err := Mount(image, mountPoint); err != nil {
-		return "", fmt.Errorf("failed to mount %s: %v", image, err)
+		return "", false, fmt.Errorf("failed to mount %s: %v", image, err)
 	}
-	return mountPoint, nil
+
+	return mountPoint, false, nil
 }
 
 // Unmount unmounts a DMG with hdiutil
@@ -416,16 +460,24 @@ func Unmount(mountPoint string, force bool) error {
 			cmd = exec.Command("hdiutil", "detach", mountPoint)
 		}
 
-		err := cmd.Run()
-		if err != nil {
-			return fmt.Errorf("failed to unmount %s: %v", mountPoint, err)
+		if err := cmd.Run(); err != nil {
+			var edetail string
+			if strings.Contains(err.Error(), "exit status 16") {
+				edetail = " (Resource busy)"
+			}
+			procs, lerr := lsof.MountPoint(mountPoint)
+			if lerr == nil {
+				edetail += "\n  Processes using mount point:"
+				for _, proc := range procs {
+					edetail += fmt.Sprintf("\n    %s", proc)
+				}
+				edetail += "\n"
+			}
+			return fmt.Errorf("failed to unmount %s: %v%s", mountPoint, err, edetail)
 		}
-
 	} else if runtime.GOOS == "linux" {
 		cmd := exec.Command("umount", mountPoint)
-
-		err := cmd.Run()
-		if err != nil {
+		if err := cmd.Run(); err != nil {
 			return fmt.Errorf("failed to unmount %s: %v", mountPoint, err)
 		}
 	}
@@ -433,20 +485,95 @@ func Unmount(mountPoint string, force bool) error {
 	return nil
 }
 
-func ExtractFromDMG(dmgPath, destPath string, pattern *regexp.Regexp) error {
+type systemEntry struct {
+	ContentHint string `plist:"content-hint,omitempty" xml:"content-hint,omitempty"`
+	DevEntry    string `plist:"dev-entry,omitempty" xml:"dev-entry,omitempty"`
+	MountPoint  string `plist:"mount-point,omitempty" xml:"mount-point,omitempty"`
+}
+
+type image struct {
+	Autodiskmount  bool          `plist:"autodiskmount,omitempty" xml:"autodiskmount,omitempty"`
+	BlockCount     int64         `plist:"blockcount,omitempty" xml:"blockcount,omitempty"`
+	BlockSize      int64         `plist:"blocksize,omitempty" xml:"blocksize,omitempty"`
+	DiskImages2    bool          `plist:"diskimages2,omitempty" xml:"diskimages2,omitempty"`
+	HdidPID        int64         `plist:"hdid-pid,omitempty" xml:"hdid-pid,omitempty"`
+	IconPath       string        `plist:"icon-path,omitempty" xml:"icon-path,omitempty"`
+	ImageEncrypted bool          `plist:"image-encrypted,omitempty" xml:"image-encrypted,omitempty"`
+	ImagePath      string        `plist:"image-path,omitempty" xml:"image-path,omitempty"`
+	ImageType      string        `plist:"image-type,omitempty" xml:"image-type,omitempty"`
+	OwnerUID       int64         `plist:"owner-uid,omitempty" xml:"owner-uid,omitempty"`
+	Removable      bool          `plist:"removable,omitempty" xml:"removable,omitempty"`
+	SystemEntities []systemEntry `plist:"system-entities,omitempty" xml:"system-entities,omitempty"`
+}
+
+type HdiUtilInfo struct {
+	Framework string  `plist:"framework,omitempty" xml:"framework,omitempty"`
+	Revision  string  `plist:"revision,omitempty" xml:"revision,omitempty"`
+	Vendor    string  `plist:"vendor,omitempty" xml:"vendor,omitempty"`
+	Images    []image `plist:"images,omitempty" xml:"images,omitempty"`
+}
+
+func (i HdiUtilInfo) Mount(mount string) *image {
+	for _, img := range i.Images {
+		for _, entry := range img.SystemEntities {
+			if strings.Contains(entry.MountPoint, mount) {
+				return &img
+			}
+		}
+	}
+	return nil
+}
+
+func MountInfo() (*HdiUtilInfo, error) {
+	if runtime.GOOS == "darwin" {
+		cmd := exec.Command("hdiutil", "info", "-plist")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return nil, fmt.Errorf("%v: %s", err, out)
+		}
+		var info HdiUtilInfo
+		if err := plist.NewDecoder(bytes.NewReader(out)).Decode(&info); err != nil {
+			return nil, fmt.Errorf("failed to decode hdiutil info plist: %v", err)
+		}
+		return &info, nil
+	}
+	return nil, fmt.Errorf("only supported on macOS")
+}
+
+func ExtractFromDMG(ipswPath, dmgPath, destPath string, pattern *regexp.Regexp) ([]string, error) {
+	// check if filesystem DMG already exists (due to previous mount command)
+	if _, err := os.Stat(dmgPath); os.IsNotExist(err) {
+		dmgs, err := Unzip(ipswPath, "", func(f *zip.File) bool {
+			return strings.EqualFold(filepath.Base(f.Name), dmgPath)
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to extract %s from IPSW: %v", dmgPath, err)
+		}
+		if len(dmgs) == 0 {
+			return nil, fmt.Errorf("failed to find %s in IPSW", dmgPath)
+		}
+		defer os.Remove(filepath.Clean(dmgs[0]))
+	}
 
 	Indent(log.Info, 2)(fmt.Sprintf("Mounting DMG %s", dmgPath))
-	mountPoint, err := MountFS(dmgPath)
+	mountPoint, alreadyMounted, err := MountDMG(dmgPath)
 	if err != nil {
-		return fmt.Errorf("failed to IPSW FS dmg: %v", err)
+		return nil, fmt.Errorf("failed to IPSW FS dmg: %v", err)
 	}
-	defer func() {
-		Indent(log.Info, 2)(fmt.Sprintf("Unmounting DMG %s", dmgPath))
-		if err := Unmount(mountPoint, false); err != nil {
-			log.Errorf("failed to unmount File System DMG mount at %s: %v", dmgPath, err)
-		}
-	}()
+	if alreadyMounted {
+		Indent(log.Debug, 3)(fmt.Sprintf("%s already mounted", dmgPath))
+	} else {
+		defer func() {
+			Indent(log.Debug, 2)(fmt.Sprintf("Unmounting %s", dmgPath))
+			if err := Retry(3, 2*time.Second, func() error {
+				return Unmount(mountPoint, false)
+			}); err != nil {
+				log.Errorf("failed to unmount DMG %s at %s: %v", dmgPath, mountPoint, err)
+			}
+		}()
+	}
 
+	var artifacts []string
 	// extract files that match regex pattern
 	if err := filepath.Walk(mountPoint, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -465,11 +592,38 @@ func ExtractFromDMG(dmgPath, destPath string, pattern *regexp.Regexp) error {
 			if err := Copy(path, fname); err != nil {
 				return fmt.Errorf("failed to extract %s: %v", fname, err)
 			}
+			artifacts = append(artifacts, fname)
 		}
 		return nil
 	}); err != nil {
-		return fmt.Errorf("failed to extract File System files from IPSW: %v", err)
+		return nil, fmt.Errorf("failed to extract File System files from IPSW: %v", err)
 	}
 
-	return nil
+	return artifacts, nil
+}
+
+func PkgUtilExpand(src, dst string) (string, error) {
+	if runtime.GOOS == "darwin" {
+		// cmd := exec.Command("pkgutil", "--expand-full", name, filepath.Join(os.TempDir(), "macosupd"))
+		outDir := filepath.Join(dst, "macosupd")
+		cmd := exec.Command("pkgutil", "--expand", src, outDir)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return "", fmt.Errorf("%v: %s", err, out)
+		}
+		return outDir, nil
+	}
+	return "", fmt.Errorf("only supported on macOS")
+}
+
+func InstallXCodeSimRuntime(path string) error {
+	if runtime.GOOS == "darwin" {
+		cmd := exec.Command("xcrun", "simctl", "runtime", "add", path)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("%v: %s", err, out)
+		}
+		return nil
+	}
+	return fmt.Errorf("only supported on macOS")
 }

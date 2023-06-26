@@ -3,12 +3,24 @@ on:
   push:
     branches:
       - master
+    paths-ignore:
+      - "*.md"
+      - "www/**"
+      - ".github/workflows/apple-meta.yml"
+      - ".github/workflows/discord.yml"
+      - ".github/workflows/docs.yml"
+      - ".github/workflows/webkit-meta.yml"
+      - ".goreleaser.yml"
+      - "config.example.yml"
   pull_request:
     branches:
       - master
+concurrency:
+  group: ${{ github.ref }}
+  cancel-in-progress: true
 jobs:
   # download:
-  #   runs-on: macos-12
+  #   runs-on: macos-13
   #   steps:
   #     - name: Cache beta IPSW
   #       id: cache-beta-ipsw
@@ -30,7 +42,7 @@ jobs:
   build:
     strategy:
       matrix:
-        platform: [macos-12]
+        platform: [macos-13]
 
     runs-on: ${{ matrix.platform }}
     steps:
@@ -39,36 +51,36 @@ jobs:
         with:
           fetch-depth: 0
       - name: Set up Go
-        uses: actions/setup-go@v3
+        uses: actions/setup-go@v4
         with:
-          go-version: 1.19
+          go-version: "stable"
 
       #
       # CACHE
       #
       # - name: Cache beta IPSW
       #   id: cache-beta-ipsw
-      #   if: matrix.platform == 'macos-12'
+      #   if: matrix.platform == 'macos-13'
       #   uses: actions/cache@v3
       #   with:
       #     path: |
       #       ~/beta
       #     key: beta-ipsw
       # - name: Download beta IPSW from Artifacts
-      #   if: matrix.platform == 'macos-12' && steps.cache-beta-ipsw.outputs.cache-hit != 'true'
+      #   if: matrix.platform == 'macos-13' && steps.cache-beta-ipsw.outputs.cache-hit != 'true'
       #   uses: actions/download-artifact@v3
       #   with:
       #     name: beta-ipsw
       #     path: ~/beta/beta.ipsw
       # - name: Cache Downloaded IPSWs
       #   id: cache-ipsws
-      #   if: matrix.platform == 'macos-12'
+      #   if: matrix.platform == 'macos-13'
       #   uses: actions/cache@v2
       #   with:
       #     path: /tmp/ipsw
       #     key: ${{ runner.os }}-${{ hashFiles('**/*.ipsw') }}
       - name: Cache go.mod (macOS)
-        if: matrix.platform == 'macos-12'
+        if: matrix.platform == 'macos-13'
         uses: actions/cache@v3
         with:
           path: |
@@ -107,9 +119,17 @@ jobs:
       - name: Build Dependencies (Linux)
         if: matrix.platform == 'ubuntu-latest'
         run: |
-          sudo apt-get -yq install libusb-dev
+          sudo apt-get -yq install fuse3 libfuse3-dev bzip2 libbz2-dev cmake libattr1-dev zlib1g-dev
+          git clone https://github.com/sgan81/apfs-fuse.git
+          cd apfs-fuse
+          git submodule init
+          git submodule update
+          mkdir build
+          cd build
+          cmake ..
+          sudo make install
       - name: Build Dependencies (macOS)
-        if: matrix.platform == 'macos-12'
+        if: matrix.platform == 'macos-13'
         run: |
           brew install tree
       - name: Build Dependencies (Windows)
@@ -126,10 +146,10 @@ jobs:
       - name: Build (Linux)
         if: matrix.platform == 'ubuntu-latest'
         run: |
-          CGO_ENABLED=1 go build -o ipsw -ldflags "-s -w -X github.com/blacktop/ipsw/cmd/ipsw/cmd.AppVersion="v1.0.0" -X github.com/blacktop/ipsw/cmd/ipsw/cmd.AppBuildTime==$(date -u +%Y%m%d)" ./cmd/ipsw
+          CGO_ENABLED=1 go build -o /usr/local/bin/ipsw -ldflags "-s -w -X github.com/blacktop/ipsw/cmd/ipsw/cmd.AppVersion="v1.0.0" -X github.com/blacktop/ipsw/cmd/ipsw/cmd.AppBuildTime==$(date -u +%Y%m%d)" ./cmd/ipsw
       - name: Build (macOS)
-        if: matrix.platform == 'macos-12'
-        run: sudo CGO_ENABLED=1 go build -o ipsw -ldflags "-s -w -X github.com/blacktop/ipsw/cmd/ipsw/cmd.AppVersion="v1.0.0" -X github.com/blacktop/ipsw/cmd/ipsw/cmd.AppBuildTime==$(date -u +%Y%m%d)" ./cmd/ipsw
+        if: matrix.platform == 'macos-13'
+        run: sudo CGO_ENABLED=1 go build -o /usr/local/bin/ipsw -ldflags "-s -w -X github.com/blacktop/ipsw/cmd/ipsw/cmd.AppVersion="v1.0.0" -X github.com/blacktop/ipsw/cmd/ipsw/cmd.AppBuildTime==$(date -u +%Y%m%d)" ./cmd/ipsw
       - name: Build (Windows)
         if: matrix.platform == 'windows-latest'
         env:

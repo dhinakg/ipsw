@@ -5,9 +5,6 @@ hide_title: true
 hide_table_of_contents: true
 sidebar_label: slide
 description: Dump slide info
-last_update:
-  date: 2023-01-10T12:52:46-07:00
-  author: blacktop
 ---
 ## ipsw dyld slide
 
@@ -20,17 +17,18 @@ ipsw dyld slide <dyld_shared_cache> [flags]
 ### Options
 
 ```
-  -a, --auth           Print only slide info for mappings with auth flags
-  -c, --cache string   path to addr to sym cache file
-  -h, --help           help for slide
-      --json           Output as JSON
+  -a, --auth            Print only slide info for mappings with auth flags
+  -c, --cache string    path to addr to sym cache file
+  -h, --help            help for slide
+      --json            Output as JSON
+  -o, --output string   folder to save JSON output
 ```
 
 ### Options inherited from parent commands
 
 ```
       --color           colorize output
-      --config string   config file (default is $HOME/.ipsw/config.yaml)
+      --config string   config file (default is $HOME/.config/ipsw/config.yaml)
   -V, --verbose         verbose output
 ```
 

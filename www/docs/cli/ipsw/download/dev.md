@@ -5,9 +5,6 @@ hide_title: true
 hide_table_of_contents: true
 sidebar_label: dev
 description: Download IPSWs (and more) from https://developer.apple.com/download
-last_update:
-  date: 2023-01-10T12:52:46-07:00
-  author: blacktop
 ---
 ## ipsw download dev
 
@@ -28,6 +25,7 @@ ipsw download dev [flags]
   -p, --page int                Page size for file lists (default 20)
       --pretty                  Pretty print JSON
       --sms                     Prefer SMS Two-factor authentication
+  -t, --timeout duration        Timeout for watch attempts in minutes (default 5m0s)
   -k, --vault-password string   Password to unlock credential vault (only for file vaults)
   -w, --watch stringArray       Developer portal group pattern to watch (i.e. '^iOS.*beta$')
 ```
@@ -38,7 +36,7 @@ ipsw download dev [flags]
       --black-list stringArray   iOS device black list
   -b, --build string             iOS BuildID (i.e. 16F203)
       --color                    colorize output
-      --config string            config file (default is $HOME/.ipsw/config.yaml)
+      --config string            config file (default is $HOME/.config/ipsw/config.yaml)
   -y, --confirm                  do not prompt user for confirmation
   -d, --device string            iOS Device (i.e. iPhone11,2)
       --insecure                 do not verify ssl certs

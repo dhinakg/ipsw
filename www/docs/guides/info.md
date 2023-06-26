@@ -2,7 +2,7 @@
 description: Get a TON of info about an IPSW/OTA withouth having to even download it.
 ---
 
-# Parse fireware zip metadata
+# Parse firmware zip metadata
 
 ### Display info about IPSWs and OTAs
 
@@ -71,6 +71,29 @@ iPhone XS Max
 
 ```
 
+### Display info as JSON
+
+```bash
+❯ ipsw info test-caches/IPSWs/iPhone15,2_16.3_20D47_Restore.ipsw --json | jq .
+```
+```json
+{
+  "type": "IPSW",
+  "version": "16.3",
+  "build": "20D47",
+  "os": "Production",
+  "devices": [
+    {
+      "name": "iPhone 14 Pro",
+      "product": "iPhone15,2",
+      "board": "D73AP",
+      "timestamp": "03 Jan 2023 14:58:27 MST",
+      "cpu": "CPU: A16 Bionic (ARMv8.6-A), ID: t8120"
+    }
+  ]
+}
+```
+
 ### Or remotely
 
 ```bash
@@ -102,5 +125,6 @@ Firmware/018-95946-047.dmg.trustcache                                  56 kB
 ```bash
 ❯ ipsw info OTA -V
 ```
-
-> **NOTE:** This will also dump out the full BuidManifest.plist, Restore.plist, and Info.plists etc
+:::info note
+This will also dump out the full BuidManifest.plist, Restore.plist, and Info.plists etc
+:::

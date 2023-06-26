@@ -5,9 +5,6 @@ hide_title: true
 hide_table_of_contents: true
 sidebar_label: extract
 description: Extract kernelcache, dyld_shared_cache or DeviceTree from IPSW/OTA
-last_update:
-  date: 2023-01-10T12:52:46-07:00
-  author: blacktop
 ---
 ## ipsw extract
 
@@ -20,7 +17,8 @@ ipsw extract <IPSW/OTA | URL> [flags]
 ### Options
 
 ```
-  -m, --dmg                     Extract File System DMG file
+  -m, --dmg string              Extract DMG file (app, sys, fs)
+      --driverkit               Extract DriverKit dyld_shared_cache
   -t, --dtree                   Extract DeviceTree
   -d, --dyld                    Extract dyld_shared_cache
   -a, --dyld-arch stringArray   dyld_shared_cache architecture to extract
@@ -36,13 +34,14 @@ ipsw extract <IPSW/OTA | URL> [flags]
       --proxy string            HTTP/HTTPS proxy
   -r, --remote                  Extract from URL
   -s, --sep                     Extract sep-firmware
+  -p, --sptm                    Extract SPTM and TXM Firmwares
 ```
 
 ### Options inherited from parent commands
 
 ```
       --color           colorize output
-      --config string   config file (default is $HOME/.ipsw/config.yaml)
+      --config string   config file (default is $HOME/.config/ipsw/config.yaml)
   -V, --verbose         verbose output
 ```
 

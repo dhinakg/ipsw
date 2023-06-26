@@ -5,26 +5,24 @@ hide_title: true
 hide_table_of_contents: true
 sidebar_label: dwarf
 description: 🚧 Dump DWARF debug information
-last_update:
-  date: 2023-01-10T12:52:46-07:00
-  author: blacktop
 ---
 ## ipsw kernel dwarf
 
 🚧 Dump DWARF debug information
 
 ```
-ipsw kernel dwarf [flags]
+ipsw kernel dwarf <dSYM> [dSYM] [flags]
 ```
 
 ### Examples
 
 ```bash
-# Dump the task struct (and pretty print with clang-format)
-❯ ipsw kernel dwarf KDK_13.0_22A5342f.kdk/kernel.development.t6000 --type task \
-											| clang-format -style='{AlignConsecutiveDeclarations: true}' --assume-filename task.h
-# Diff two versions of a struct
-❯ ipsw kernel dwarf --type task --diff KDK_13.0_22A5342f.kdk/kernel.development.t6000 KDK_13.0_22A5352e.kdk/kernel.development.t6000
+# Dump the task struct
+❯ ipsw kernel dwarf -t task /Library/Developer/KDKs/KDK_13.3_22E5230e.kdk/System/Library/Kernels/kernel.development.t6020.dSYM
+# Diff task struct
+❯ ipsw kernel dwarf --type task --diff
+# Diff ALL structs
+❯ ipsw kernel dwarf --diff
 ```
 
 ### Options
@@ -32,6 +30,7 @@ ipsw kernel dwarf [flags]
 ```
   -d, --diff          Diff two structs
   -h, --help          help for dwarf
+  -m, --md            Markdown diff output
   -n, --name string   Name to lookup
   -t, --type string   Type to lookup
 ```
@@ -40,7 +39,7 @@ ipsw kernel dwarf [flags]
 
 ```
       --color           colorize output
-      --config string   config file (default is $HOME/.ipsw/config.yaml)
+      --config string   config file (default is $HOME/.config/ipsw/config.yaml)
   -V, --verbose         verbose output
 ```
 

@@ -6,9 +6,9 @@ NEXT_VERSION=$(shell svu patch)
 GO_BIN=go
 
 .PHONY: build-deps
-build-deps: x86-brew ## Install the build dependencies
+build-deps: ## Install the build dependencies
 	@echo " > Installing build deps"
-	brew install $(GO_BIN) goreleaser zig unicorn libusb
+	brew install $(GO_BIN) goreleaser zig unicorn libusb go-swagger/go-swagger/go-swagger
 
 .PHONY: dev-deps
 dev-deps: ## Install the dev dependencies
@@ -21,9 +21,9 @@ dev-deps: ## Install the dev dependencies
 
 .PHONY: x86-brew
 x86-brew: ## Install the x86_64 homebrew on Apple Silicon
-	cd ~/Downloads; mkdir homebrew
-	cd ~/Downloads; curl -L https://github.com/Homebrew/brew/tarball/master | tar xz --strip 1 -C homebrew
-	sudo mv ~/Downloads/homebrew /usr/local/homebrew
+	mkdir /tmp/homebrew
+	cd /tmp/homebrew; curl -L https://github.com/Homebrew/brew/tarball/master | tar xz --strip 1 -C homebrew
+	sudo mv /tmp/homebrew/homebrew /usr/local/homebrew
 	arch -x86_64 /usr/local/homebrew/bin/brew install unicorn libusb
 
 .PHONY: setup
@@ -32,24 +32,26 @@ setup: build-deps dev-deps ## Install all the build and dev dependencies
 .PHONY: dry_release
 dry_release: ## Run goreleaser without releasing/pushing artifacts to github
 	@echo " > Creating Pre-release Build ${NEXT_VERSION}"
-	@GOROOT=$(shell go env GOROOT) goreleaser build --id darwin_arm64_extras_build --rm-dist --snapshot --single-target --output dist/ipsw
+	@GOROOT=$(shell go env GOROOT) goreleaser build --id darwin_arm64_extras_build --clean --timeout 60m --snapshot --single-target --output dist/ipsw
 
 .PHONY: snapshot
 snapshot: ## Run goreleaser snapshot
 	@echo " > Creating Snapshot ${NEXT_VERSION}"
-	@GOROOT=$(shell go env GOROOT) goreleaser --rm-dist --snapshot
+	@GOROOT=$(shell go env GOROOT) goreleaser --clean --timeout 60m --snapshot
 
 .PHONY: release
 release: ## Create a new release from the NEXT_VERSION
 	@echo " > Creating Release ${NEXT_VERSION}"
 	@hack/make/release ${NEXT_VERSION}
-	@GOROOT=$(shell go env GOROOT) goreleaser --rm-dist --skip-validate
+	@GOROOT=$(shell go env GOROOT) goreleaser --clean --timeout 60m --skip-validate
+	@echo " > Update Portfile ${NEXT_VERSION}"
+	@hack/make/portfile ../ports
 
 .PHONY: release-minor
 release-minor: ## Create a new minor semver release
 	@echo " > Creating Release $(shell svu minor)"
 	@hack/make/release $(shell svu minor)
-	@GOROOT=$(shell go env GOROOT) goreleaser --rm-dist
+	@GOROOT=$(shell go env GOROOT) goreleaser --clean --timeout 60m --skip-validate
 
 .PHONY: destroy
 destroy: ## Remove release from the CUR_VERSION
@@ -61,18 +63,37 @@ destroy: ## Remove release from the CUR_VERSION
 build: ## Build ipsw
 	@echo " > Building ipsw"
 	@$(GO_BIN) mod download
-	@CGO_ENABLED=1 $(GO_BIN) build -ldflags "-s -w -X github.com/blacktop/ipsw/cmd/ipsw/cmd.AppVersion=$(CUR_VERSION) -X github.com/blacktop/ipsw/cmd/ipsw/cmd.AppBuildTime==$(date -u +%Y%m%d)" ./cmd/ipsw
+	@CGO_ENABLED=1 $(GO_BIN) build -ldflags "-s -w -X github.com/blacktop/ipsw/cmd/ipsw/cmd.AppVersion=$(CUR_VERSION) -X github.com/blacktop/ipsw/cmd/ipsw/cmd.AppBuildTime=$(date -u +%Y%m%d)" ./cmd/ipsw
 
 build-ios: ## Build ipsw for iOS
 	@echo " > Building ipsw"
 	@$(GO_BIN) mod download
-	@CGO_ENABLED=1 GOOS=ios GOARHC=arm64 CC=$(shell go env GOROOT)/misc/ios/clangwrap.sh $(GO_BIN) build -ldflags "-s -w -X github.com/blacktop/ipsw/cmd/ipsw/cmd.AppVersion=$(CUR_VERSION) -X github.com/blacktop/ipsw/cmd/ipsw/cmd.AppBuildTime==$(date -u +%Y%m%d)" ./cmd/ipsw
+	@CGO_ENABLED=1 GOOS=ios GOARCH=arm64 CC=$(shell go env GOROOT)/misc/ios/clangwrap.sh $(GO_BIN) build -ldflags "-s -w -X github.com/blacktop/ipsw/cmd/ipsw/cmd.AppVersion=$(CUR_VERSION) -X github.com/blacktop/ipsw/cmd/ipsw/cmd.AppBuildTime==$(date -u +%Y%m%d)" ./cmd/ipsw
 	@codesign --entitlements hack/make/data/ent.plist -s - -f ipsw
+
+build-linux: ## Build ipsw (linux)
+	@echo " > Building ipsw (linux)"
+	@$(GO_BIN) mod download
+	@CGO_ENABLED=1 GOOS=linux GOARCH=arm64 CC='zig cc -target aarch64-linux-musl' CXX='zig c++ -target aarch64-linux-musl' $(GO_BIN) build -ldflags "-s -w -X github.com/blacktop/ipsw/cmd/ipsw/cmd.AppVersion=$(CUR_VERSION) -X github.com/blacktop/ipsw/cmd/ipsw/cmd.AppBuildTime=$(date -u +%Y%m%d)" ./cmd/ipsw
+	@echo " > Building ipswd (linux)"
+	@CGO_ENABLED=0 GOOS=linux GOARCH=arm64 $(GO_BIN) build -ldflags "-s -w --X github.com/blacktop/ipsw/api/types.BuildVersion=$(CUR_VERSION) -X github.com/blacktop/ipsw/api/types.BuildTime=$(date -u +%Y%m%d)" ./cmd/ipswd
+
 
 .PHONY: docs
 docs: ## Build the cli docs
 	@echo " > Updating CLI Docs"
+	go generate ./...
 	hack/make/docs
+
+.PHONY: docs-search
+docs-search: ## Build/Update the docs search index
+	@echo " > Updating Docs Search Index"
+	@docker run -t --rm \
+                  -e MEILISEARCH_HOST_URL=$(MEILISEARCH_HOST_URL) \
+                  -e MEILISEARCH_API_KEY=$(MEILISEARCH_API_KEY) \
+                  -v $(PWD)/hack/scripts/scraper.json:/docs-scraper/scraper.json \
+                  getmeili/docs-scraper:v0.12.8 pipenv run ./docs_scraper ./scraper.json
+	# @curl -X POST "$(MEILISEARCH_HOST_URL)/swap-indexes" -H "Authorization: Bearer $(MEILISEARCH_API_KEY)" -H "Content-Type: application/json" --data-binary '[ { "indexes": ["docs-v1", "docs-v1-staging"] } ]'
 
 .PHONY: test-docs
 test-docs: ## Start local server hosting docusaurus docs
@@ -89,7 +110,7 @@ update_mod: ## Update go.mod file
 .PHONY: update_devs
 update_devs: ## Parse XCode database for new devices
 	@echo " > Updating device_traits.json"
-	CGO_ENABLED=1 CGO_CFLAGS=-I/usr/local/include CGO_LDFLAGS=-L/usr/local/lib CC=gcc $(GO_BIN) run ./cmd/ipsw/main.go device-list-gen pkg/xcode/device_traits.json
+	$(GO_BIN) run ./cmd/ipsw/main.go device-list-gen pkg/xcode/data/device_traits.json
 
 .PHONY: update_keys
 update_keys: ## Scrape the iPhoneWiki for AES keys
@@ -105,6 +126,11 @@ update_frida: ## Updates the frida-core-devkits used in the frida cmd
 docker: ## Build docker image
 	@echo " > Building Docker Image"
 	docker build --build-arg VERSION=$(NEXT_VERSION) -t $(REPO)/$(NAME):$(NEXT_VERSION) .
+
+.PHONY: docker-daemon
+docker-daemon: ## Build daemon docker image
+	@echo " > Building Docker Image"
+	docker build --build-arg VERSION=$(NEXT_VERSION) -t $(REPO)/$(NAME)-daemon:$(NEXT_VERSION) -f Dockerfile.daemon .
 
 .PHONY: docker-tag
 docker-tag: docker ## Tag docker image

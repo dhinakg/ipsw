@@ -1,5 +1,5 @@
 /*
-Copyright © 2018-2022 blacktop
+Copyright © 2018-2023 blacktop
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -22,12 +22,14 @@ THE SOFTWARE.
 package dyld
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/apex/log"
+	dcsCmd "github.com/blacktop/ipsw/internal/commands/dsc"
 	"github.com/blacktop/ipsw/internal/download"
 	"github.com/blacktop/ipsw/internal/utils"
 	"github.com/blacktop/ipsw/pkg/dyld"
@@ -43,14 +45,17 @@ func init() {
 	WebkitCmd.Flags().StringP("api", "a", "", "Github API Token")
 	WebkitCmd.Flags().String("proxy", "", "HTTP/HTTPS proxy")
 	WebkitCmd.Flags().Bool("insecure", false, "do not verify ssl certs")
+	WebkitCmd.Flags().BoolP("diff", "d", false, "Diff two dyld_shared_cache files")
+	WebkitCmd.Flags().BoolP("json", "j", false, "Output as JSON")
 	WebkitCmd.MarkZshCompPositionalArgumentFile(1, "dyld_shared_cache*")
 }
 
 // WebkitCmd represents the webkit command
 var WebkitCmd = &cobra.Command{
-	Use:   "webkit <dyld_shared_cache>",
-	Short: "Get WebKit version from a dyld_shared_cache",
-	Args:  cobra.MinimumNArgs(1),
+	Use:     "webkit <dyld_shared_cache>",
+	Aliases: []string{"w"},
+	Short:   "Get WebKit version from a dyld_shared_cache",
+	Args:    cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 
 		if viper.GetBool("verbose") {
@@ -62,6 +67,8 @@ var WebkitCmd = &cobra.Command{
 		proxy, _ := cmd.Flags().GetString("proxy")
 		insecure, _ := cmd.Flags().GetBool("insecure")
 		apiToken, _ := cmd.Flags().GetString("api")
+		diff, _ := cmd.Flags().GetBool("diff")
+		asJSON, _ := cmd.Flags().GetBool("json")
 
 		if len(apiToken) == 0 {
 			if val, ok := os.LookupEnv("GITHUB_TOKEN"); ok {
@@ -99,53 +106,127 @@ var WebkitCmd = &cobra.Command{
 		}
 		defer f.Close()
 
-		image, err := f.Image("WebKit")
+		webkit1, err := dcsCmd.GetWebkitVersion(f)
 		if err != nil {
-			return fmt.Errorf("image not in %s: %v", dscPath, err)
+			return fmt.Errorf("failed to get WebKit version: %v", err)
 		}
 
-		m, err := image.GetPartialMacho()
-		if err != nil {
-			return err
-		}
-
-		if getRev {
-			log.Info("Querying https://trac.webkit.org...")
-			ver, rev, err := dyld.ScrapeWebKitTRAC(m.SourceVersion().Version.String())
+		if diff {
+			dscPath2 := filepath.Clean(args[1])
+			fileInfo, err := os.Lstat(dscPath2)
 			if err != nil {
-				log.Infof("WebKit Version: %s", m.SourceVersion().Version)
+				return fmt.Errorf("file %s does not exist", dscPath2)
+			}
+			// Check if file is a symlink
+			if fileInfo.Mode()&os.ModeSymlink != 0 {
+				symlinkPath, err := os.Readlink(dscPath2)
+				if err != nil {
+					return errors.Wrapf(err, "failed to read symlink %s", dscPath2)
+				}
+				// TODO: this seems like it would break
+				linkParent := filepath.Dir(dscPath2)
+				linkRoot := filepath.Dir(linkParent)
+
+				dscPath2 = filepath.Join(linkRoot, symlinkPath)
+			}
+
+			f, err := dyld.Open(dscPath2)
+			if err != nil {
 				return err
 			}
-			log.Infof("%s (svn rev %s)", ver, rev)
+			defer f.Close()
+
+			webkit2, err := dcsCmd.GetWebkitVersion(f)
+			if err != nil {
+				return fmt.Errorf("failed to get WebKit version: %v", err)
+			}
+
+			out, err := utils.GitDiff(
+				webkit1+"\n",
+				webkit2+"\n",
+				&utils.GitDiffConfig{Color: viper.GetBool("color"), Tool: viper.GetString("diff-tool")})
+			if err != nil {
+				return err
+			}
+			if len(out) == 0 {
+				log.Info("No differences found")
+				return nil
+			}
+			log.Info("Differences found")
+			fmt.Println(out)
+
 			return nil
+		}
+
+		var svnRev string
+		if getRev {
+			log.Info("Querying https://trac.webkit.org...")
+			ver, rev, err := dyld.ScrapeWebKitTRAC(webkit1)
+			if err != nil {
+				log.Infof("WebKit Version: %s", webkit1)
+				return err
+			}
+			svnRev = fmt.Sprintf("%s (svn rev %s)", ver, rev)
 		} else if getGit {
 			log.Info("Querying https://github.com API...")
 			var tags []download.GithubTag
 			if len(apiToken) == 0 {
 				tags, err = download.GetPreprocessedWebKitTags(proxy, insecure)
 				if err != nil {
-					log.Infof("WebKit Version: %s", m.SourceVersion().Version)
+					log.Infof("WebKit Version: %s", webkit1)
 					return err
 				}
 			} else {
 				tags, err = download.WebKitGraphQLTags(proxy, insecure, apiToken)
 				if err != nil {
-					log.Infof("WebKit Version: %s", m.SourceVersion().Version)
+					log.Infof("WebKit Version: %s", webkit1)
 					return err
 				}
 			}
 			for _, tag := range tags {
-				if strings.Contains(tag.Name, m.SourceVersion().Version.String()) {
-					log.Infof("WebKit Version: %s", m.SourceVersion().Version)
-					utils.Indent(log.Info, 2)(fmt.Sprintf("Tag:  %s", tag.Name))
-					utils.Indent(log.Info, 2)(fmt.Sprintf("URL:  %s", tag.TarURL))
-					utils.Indent(log.Info, 2)(fmt.Sprintf("Date: %s", tag.Commit.Date.Format("02Jan2006 15:04:05")))
+				if strings.Contains(tag.Name, webkit1) {
+					if asJSON {
+						b, err := json.Marshal(&struct {
+							Version string             `json:"version"`
+							Tag     download.GithubTag `json:"tag,omitempty"`
+						}{
+							Version: webkit1,
+							Tag:     tag,
+						})
+						if err != nil {
+							return err
+						}
+						fmt.Println(string(b))
+					} else {
+						log.Infof("WebKit Version: %s", webkit1)
+						utils.Indent(log.Info, 2)(fmt.Sprintf("Tag:  %s", tag.Name))
+						utils.Indent(log.Info, 2)(fmt.Sprintf("URL:  %s", tag.TarURL))
+						utils.Indent(log.Info, 2)(fmt.Sprintf("Date: %s", tag.Commit.Date.Format("02Jan2006 15:04:05")))
+					}
 					return nil
 				}
 			}
 		}
 
-		log.Infof("WebKit Version: %s", m.SourceVersion().Version)
+		if asJSON {
+			b, err := json.Marshal(&struct {
+				Version string `json:"version"`
+				Rev     string `json:"rev,omitempty"`
+			}{
+				Version: webkit1,
+				Rev:     svnRev,
+			})
+			if err != nil {
+				return err
+			}
+			fmt.Println(string(b))
+		} else {
+			log.Infof("WebKit Version: %s", webkit1)
+			if len(svnRev) > 0 {
+				utils.Indent(log.Info, 2)(svnRev)
+			}
+		}
+
 		return nil
 	},
 }

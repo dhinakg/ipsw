@@ -1,5 +1,5 @@
 /*
-Copyright © 2018-2022 blacktop
+Copyright © 2018-2023 blacktop
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -23,7 +23,6 @@ package dyld
 
 import (
 	"bytes"
-	"encoding/binary"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -32,15 +31,24 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	"github.com/alecthomas/chroma/quick"
 	"github.com/apex/log"
 	"github.com/blacktop/go-macho"
 	"github.com/blacktop/go-macho/pkg/fixupchains"
+	swift "github.com/blacktop/ipsw/internal/swift"
 	"github.com/blacktop/ipsw/internal/utils"
 	"github.com/blacktop/ipsw/pkg/dyld"
+	"github.com/fatih/color"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
+
+var symAddrColor = color.New(color.Faint).SprintfFunc()
+var symImageColor = color.New(color.Faint, color.FgBlue).SprintfFunc()
+var symTypeColor = color.New(color.Faint, color.FgCyan).SprintfFunc()
+var symLibColor = color.New(color.Faint, color.FgMagenta).SprintfFunc()
+var symNameColor = color.New(color.Bold).SprintFunc()
 
 func init() {
 	DyldCmd.AddCommand(MachoCmd)
@@ -49,6 +57,7 @@ func init() {
 	MachoCmd.Flags().BoolP("json", "j", false, "Print the TOC as JSON")
 	MachoCmd.Flags().BoolP("objc", "o", false, "Print ObjC info")
 	MachoCmd.Flags().BoolP("objc-refs", "r", false, "Print ObjC references")
+	// MachoCmd.Flags().BoolP("swift", "w", false, "🚧 Print Swift info")
 	MachoCmd.Flags().BoolP("symbols", "n", false, "Print symbols")
 	MachoCmd.Flags().BoolP("starts", "f", false, "Print function starts")
 	MachoCmd.Flags().BoolP("strings", "s", false, "Print cstrings")
@@ -62,59 +71,10 @@ func init() {
 	MachoCmd.MarkZshCompPositionalArgumentFile(1)
 }
 
-func rebaseMachO(dsc *dyld.File, machoPath string) error {
-	f, err := os.OpenFile(machoPath, os.O_RDWR, 0755)
-	if err != nil {
-		return fmt.Errorf("failed to open exported MachO %s: %v", machoPath, err)
-	}
-	defer f.Close()
-
-	mm, err := macho.NewFile(f)
-	if err != nil {
-		return err
-	}
-
-	for _, seg := range mm.Segments() {
-		uuid, mapping, err := dsc.GetMappingForVMAddress(seg.Addr)
-		if err != nil {
-			return err
-		}
-
-		if mapping.SlideInfoOffset == 0 {
-			continue
-		}
-
-		startAddr := seg.Addr - mapping.Address
-		endAddr := ((seg.Addr + seg.Memsz) - mapping.Address) + uint64(dsc.SlideInfo.GetPageSize())
-
-		start := startAddr / uint64(dsc.SlideInfo.GetPageSize())
-		end := endAddr / uint64(dsc.SlideInfo.GetPageSize())
-
-		rebases, err := dsc.GetRebaseInfoForPages(uuid, mapping, start, end)
-		if err != nil {
-			return err
-		}
-
-		for _, rebase := range rebases {
-			off, err := mm.GetOffset(rebase.CacheVMAddress)
-			if err != nil {
-				continue
-			}
-			if _, err := f.Seek(int64(off), io.SeekStart); err != nil {
-				return fmt.Errorf("failed to seek in exported file to offset %#x from the start: %v", off, err)
-			}
-			if err := binary.Write(f, dsc.ByteOrder, rebase.Target); err != nil {
-				return fmt.Errorf("failed to write rebase address %#x: %v", rebase.Target, err)
-			}
-		}
-	}
-
-	return nil
-}
-
 // MachoCmd represents the macho command
 var MachoCmd = &cobra.Command{
 	Use:           "macho <dyld_shared_cache> <dylib>",
+	Aliases:       []string{"m"},
 	Short:         "Parse a dylib file",
 	Args:          cobra.MinimumNArgs(1),
 	SilenceUsage:  true,
@@ -129,6 +89,7 @@ var MachoCmd = &cobra.Command{
 		showLoadCommandsAsJSON, _ := cmd.Flags().GetBool("json")
 		showObjC, _ := cmd.Flags().GetBool("objc")
 		showObjcRefs, _ := cmd.Flags().GetBool("objc-refs")
+		showSwift, _ := cmd.Flags().GetBool("swift")
 		dumpSymbols, _ := cmd.Flags().GetBool("symbols")
 		showFuncStarts, _ := cmd.Flags().GetBool("starts")
 		dumpStrings, _ := cmd.Flags().GetBool("strings")
@@ -139,9 +100,9 @@ var MachoCmd = &cobra.Command{
 		extractPath, _ := cmd.Flags().GetString("output")
 		forceExtract, _ := cmd.Flags().GetBool("force")
 
-		onlyFuncStarts := !showLoadCommands && !showObjC && !dumpStubs && showFuncStarts
-		onlyStubs := !showLoadCommands && !showObjC && !showFuncStarts && dumpStubs
-		onlySearch := !showLoadCommands && !showObjC && !showFuncStarts && !dumpStubs && searchPattern != ""
+		onlyFuncStarts := !showLoadCommands && !showObjC && !showSwift && !dumpStubs && showFuncStarts
+		onlyStubs := !showLoadCommands && !showObjC && !showSwift && !showFuncStarts && dumpStubs
+		onlySearch := !showLoadCommands && !showObjC && !showSwift && !showFuncStarts && !dumpStubs && searchPattern != ""
 
 		dscPath := filepath.Clean(args[0])
 
@@ -278,11 +239,24 @@ var MachoCmd = &cobra.Command{
 							fmt.Println(m.GetObjCToc())
 						}
 						if protos, err := m.GetObjCProtocols(); err == nil {
+							seen := make(map[uint64]bool)
 							for _, proto := range protos {
-								if viper.GetBool("verbose") {
-									fmt.Println(proto.Verbose())
-								} else {
-									fmt.Println(proto.String())
+								if _, ok := seen[proto.Ptr]; !ok { // prevent displaying duplicates
+									if viper.GetBool("verbose") {
+										if viper.GetBool("color") {
+											quick.Highlight(os.Stdout, swift.DemangleBlob(proto.Verbose()), "objc", "terminal256", "nord")
+											quick.Highlight(os.Stdout, "\n/****************************************/\n\n", "objc", "terminal256", "nord")
+										} else {
+											fmt.Println(swift.DemangleBlob(proto.Verbose()))
+										}
+									} else {
+										if viper.GetBool("color") {
+											quick.Highlight(os.Stdout, proto.String()+"\n", "objc", "terminal256", "nord")
+										} else {
+											fmt.Println(proto.String())
+										}
+									}
+									seen[proto.Ptr] = true
 								}
 							}
 						} else if !errors.Is(err, macho.ErrObjcSectionNotFound) {
@@ -291,9 +265,18 @@ var MachoCmd = &cobra.Command{
 						if classes, err := m.GetObjCClasses(); err == nil {
 							for _, class := range classes {
 								if viper.GetBool("verbose") {
-									fmt.Println(class.Verbose())
+									if viper.GetBool("color") {
+										quick.Highlight(os.Stdout, swift.DemangleBlob(class.Verbose()), "objc", "terminal256", "nord")
+										quick.Highlight(os.Stdout, "\n/****************************************/\n\n", "objc", "terminal256", "nord")
+									} else {
+										fmt.Println(swift.DemangleBlob(class.Verbose()))
+									}
 								} else {
-									fmt.Println(class.String())
+									if viper.GetBool("color") {
+										quick.Highlight(os.Stdout, class.String()+"\n", "objc", "terminal256", "nord")
+									} else {
+										fmt.Println(class.String())
+									}
 								}
 							}
 						} else if !errors.Is(err, macho.ErrObjcSectionNotFound) {
@@ -302,9 +285,18 @@ var MachoCmd = &cobra.Command{
 						if cats, err := m.GetObjCCategories(); err == nil {
 							for _, cat := range cats {
 								if viper.GetBool("verbose") {
-									fmt.Println(cat.Verbose())
+									if viper.GetBool("color") {
+										quick.Highlight(os.Stdout, swift.DemangleBlob(cat.Verbose()), "objc", "terminal256", "nord")
+										quick.Highlight(os.Stdout, "\n/****************************************/\n\n", "objc", "terminal256", "nord")
+									} else {
+										fmt.Println(swift.DemangleBlob(cat.Verbose()))
+									}
 								} else {
-									fmt.Println(cat.String())
+									if viper.GetBool("color") {
+										quick.Highlight(os.Stdout, cat.String()+"\n", "objc", "terminal256", "nord")
+									} else {
+										fmt.Println(cat.String())
+									}
 								}
 							}
 						} else if !errors.Is(err, macho.ErrObjcSectionNotFound) {
@@ -374,6 +366,43 @@ var MachoCmd = &cobra.Command{
 					fmt.Println()
 				}
 
+				if showSwift {
+					fmt.Println("Swift")
+					fmt.Println("=====")
+					info, err := m.GetObjCImageInfo()
+					if err != nil {
+						if !errors.Is(err, macho.ErrObjcSectionNotFound) {
+							return err
+						}
+					}
+					if info != nil && info.HasSwift() {
+						if fields, err := m.GetSwiftFields(); err == nil {
+							for _, field := range fields {
+								if viper.GetBool("verbose") {
+									if viper.GetBool("color") {
+										quick.Highlight(os.Stdout, swift.DemangleBlob(field.String()), "swift", "terminal256", "nord")
+										quick.Highlight(os.Stdout, "\n/****************************************/\n\n", "swift", "terminal256", "nord")
+									} else {
+										fmt.Println(swift.DemangleBlob(field.String()))
+									}
+								} else {
+									if viper.GetBool("color") {
+										quick.Highlight(os.Stdout, field.String(), "swift", "terminal256", "nord")
+										quick.Highlight(os.Stdout, "\n/****************************************/\n\n", "swift", "terminal256", "nord")
+									} else {
+										fmt.Println(field.String())
+									}
+								}
+							}
+						} else if !errors.Is(err, macho.ErrSwiftSectionError) {
+							log.Error(err.Error())
+						}
+					} else {
+						fmt.Println("  - no swift")
+					}
+					fmt.Println()
+				}
+
 				if showFuncStarts {
 					if !onlyFuncStarts {
 						fmt.Println("FUNCTION STARTS")
@@ -391,17 +420,27 @@ var MachoCmd = &cobra.Command{
 				}
 
 				if dumpSymbols {
+					image.ParseLocalSymbols(false)
 					w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', 0)
 					if m.Symtab != nil {
 						fmt.Println("SYMBOLS")
 						fmt.Println("=======")
-						var sec string
+						undeflush := false
 						for _, sym := range m.Symtab.Syms {
-							if sym.Sect > 0 && int(sym.Sect) <= len(m.Sections) {
-								sec = fmt.Sprintf("%s.%s", m.Sections[sym.Sect-1].Seg, m.Sections[sym.Sect-1].Name)
+							if sym.Type.IsUndefinedSym() && !undeflush {
+								w.Flush()
+								undeflush = true
 							}
-							fmt.Fprintf(w, "%#09x:  <%s> \t %s\n", sym.Value, sym.Type.String(sec), sym.Name)
-							// fmt.Printf("0x%016X <%s> %s\n", sym.Value, sym.Type.String(sec), sym.Name)
+							if sym.Value == 0 {
+								fmt.Fprintf(w, "              %s\n", strings.Join([]string{symTypeColor(sym.GetType(m)), symNameColor(sym.Name), symLibColor(sym.GetLib(m))}, "\t"))
+							} else {
+								if sym.Name == "<redacted>" {
+									if name, ok := f.AddressToSymbol[sym.Value]; ok {
+										sym.Name = name
+									}
+								}
+								fmt.Fprintf(w, "%s:  %s\n", symAddrColor("%#09x", sym.Value), strings.Join([]string{symTypeColor(sym.GetType(m)), symNameColor(sym.Name), symLibColor(sym.GetLib(m))}, "\t"))
+							}
 						}
 						w.Flush()
 					}

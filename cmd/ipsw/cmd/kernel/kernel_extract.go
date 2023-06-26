@@ -1,5 +1,5 @@
 /*
-Copyright © 2018-2022 blacktop
+Copyright © 2018-2023 blacktop
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -61,6 +61,10 @@ var kerExtractCmd = &cobra.Command{
 
 		dumpAll := viper.GetBool("kernel.extract.all")
 		extractPath := viper.GetString("kernel.extract.output")
+
+		if len(args) == 1 && !dumpAll {
+			return fmt.Errorf("you must specify a KEXT to extract OR use the --all flag")
+		}
 
 		kernPath := filepath.Clean(args[0])
 

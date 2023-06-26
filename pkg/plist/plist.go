@@ -151,7 +151,7 @@ func Parse(path string) (*Plists, error) {
 
 	zr, err := zip.OpenReader(path)
 	if err != nil {
-		return nil, fmt.Errorf("failed to open ipsw zip: %s", err)
+		return nil, fmt.Errorf("failed to open IPSW zip: %s", err)
 	}
 	defer zr.Close()
 
@@ -233,6 +233,17 @@ func (p *Plists) GetKernelType(name string) string {
 		}
 	}
 	return p.OTAInfo.MobileAssetProperties.ReleaseType
+}
+
+func (p *Plists) GetDeviceForBoardConfig(boardConfig string) *restoreDeviceMap {
+	if p != nil && p.Restore != nil {
+		for _, dmap := range p.Restore.DeviceMap {
+			if strings.EqualFold(dmap.BoardConfig, boardConfig) {
+				return &dmap
+			}
+		}
+	}
+	return nil
 }
 
 func (i *Plists) String() string {

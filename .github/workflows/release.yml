@@ -11,32 +11,28 @@ jobs:
   goreleaser:
     strategy:
       matrix:
-        # platform: [ubuntu-latest, windows-latest, macos-12]
+        # platform: [ubuntu-latest, windows-latest, macos-13]
         platform: [ubuntu-latest]
 
     runs-on: ${{ matrix.platform }}
     steps:
-      -
-        name: Checkout
+      - name: Checkout
         uses: actions/checkout@v3
         with:
           fetch-depth: 0
-      -
-        name: Fetch all tags
+      - name: Fetch all tags
         run: git fetch --force --tags
-      -
-        name: Set up Go
-        uses: actions/setup-go@v3
+      - name: Set up Go
+        uses: actions/setup-go@v4
         with:
-          go-version: 1.19
+          go-version: "stable"
 
       - # LINUX ################################################################
         if: matrix.platform == 'ubuntu-latest'
         name: linux-deps
         run: |
           sudo apt-get -yq install gcc-aarch64-linux-gnu cmake pkg-config jq libusb-1.0-0-dev
-      -
-        if: matrix.platform == 'ubuntu-latest'
+      - if: matrix.platform == 'ubuntu-latest'
         name: install-unicorn
         run: |
           cd /tmp
@@ -60,8 +56,7 @@ jobs:
       #   name: snapcraft-login
       #   if: matrix.platform == 'ubuntu-latest'
       #   run: snapcraft login --with <(echo "${{ secrets.SNAPCRAFT_LOGIN }}")
-      -
-        if: matrix.platform == 'ubuntu-latest'
+      - if: matrix.platform == 'ubuntu-latest'
         name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v4
         with:
@@ -70,8 +65,7 @@ jobs:
           args: release --rm-dist -f hack/goreleaser/linux.yml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      -
-        if: matrix.platform == 'ubuntu-latest'
+      - if: matrix.platform == 'ubuntu-latest'
         name: Upload assets
         uses: actions/upload-artifact@v3
         with:
@@ -112,7 +106,7 @@ jobs:
       #     path: dist/*
 
       # -  # MACOS ################################################################
-      #   if: matrix.platform == 'macos-12'
+      #   if: matrix.platform == 'macos-13'
       #   name: macos-deps
       #   run: |
       #     brew tap anchore/syft
@@ -120,7 +114,7 @@ jobs:
       #     # arch -arch arm64 brew install libusb unicorn
       #     # arch -arch x86_64 brew install libusb unicorn
       # -
-      #   if: matrix.platform == 'macos-12'
+      #   if: matrix.platform == 'macos-13'
       #   name: Run GoReleaser
       #   uses: goreleaser/goreleaser-action@v4
       #   with:
@@ -131,7 +125,7 @@ jobs:
       #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       #     SCOOP_TAP_GITHUB_TOKEN: ${{ secrets.GH_SCOOP }}
       # -
-      #   if: matrix.platform == 'macos-12'
+      #   if: matrix.platform == 'macos-13'
       #   name: Upload assets
       #   uses: actions/upload-artifact@v3
       #   with:

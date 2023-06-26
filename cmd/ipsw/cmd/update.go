@@ -1,5 +1,5 @@
 /*
-Copyright © 2018-2022 blacktop
+Copyright © 2018-2023 blacktop
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -55,6 +55,7 @@ func init() {
 // updateCmd represents the update command
 var updateCmd = &cobra.Command{
 	Use:           "update",
+	Aliases:       []string{"u"},
 	Short:         "Download an ipsw update if one exists",
 	SilenceUsage:  true,
 	SilenceErrors: true,

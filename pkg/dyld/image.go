@@ -266,6 +266,20 @@ type CacheReader struct {
 	ruuid types.UUID
 }
 
+// Free frees the underlying data so the GC can reclaim it.
+func (i *CacheImage) Free() {
+	i.m = nil
+	i.pm = nil
+	i.sinfo = nil
+	i.RangeEntries = nil
+	i.PatchableExports = nil
+	i.PatchableGOTs = nil
+	i.LocalSymbols = nil
+	i.PublicSymbols = nil
+	i.ObjC = objcInfo{}
+	i.Analysis = analysis{}
+}
+
 func (i *CacheImage) Read(p []byte) (n int, err error) {
 	if i.off >= i.limit {
 		return 0, io.EOF
@@ -445,7 +459,7 @@ func (i *CacheImage) GetPartialMacho() (*macho.File, error) {
 		},
 	}
 	i.pm, err = macho.NewFile(io.NewSectionReader(i.cache.r[i.cuuid], int64(offset), int64(i.TextSegmentSize)), macho.FileConfig{
-		LoadFilter: []types.LoadCmd{
+		LoadIncluding: []types.LoadCmd{
 			types.LC_SEGMENT_64,
 			types.LC_DYLD_INFO,
 			types.LC_DYLD_INFO_ONLY,
@@ -477,10 +491,6 @@ func (i *CacheImage) Analyze() error {
 
 	if err := i.ParsePublicSymbols(false); err != nil {
 		log.Errorf("failed to parse exported symbols for %s: %w", i.Name, err)
-	}
-
-	if !i.Analysis.State.IsStartsDone() {
-		i.ParseStarts()
 	}
 
 	if err := i.ParseLocalSymbols(false); err != nil {
@@ -592,6 +602,10 @@ func (i *CacheImage) Analyze() error {
 		}
 	}
 
+	if !i.Analysis.State.IsStartsDone() {
+		i.ParseStarts()
+	}
+
 	return nil
 }
 
@@ -680,8 +694,14 @@ func (i *CacheImage) ParseObjC() error {
 		if err := i.cache.ClassesForImage(i.Name); err != nil {
 			return fmt.Errorf("failed to parse objc classes for image %s: %v", filepath.Base(i.Name), err)
 		}
+		if err := i.cache.CategoriesForImage(i.Name); err != nil {
+			return fmt.Errorf("failed to parse objc categories for image %s: %v", filepath.Base(i.Name), err)
+		}
 		if err := i.cache.ProtocolsForImage(i.Name); err != nil {
 			return fmt.Errorf("failed to parse objc protocols for image %s: %v", filepath.Base(i.Name), err)
+		}
+		if err := i.cache.GetObjCStubsForImage(i.Name); err != nil && !errors.Is(err, macho.ErrObjcSectionNotFound) {
+			return fmt.Errorf("failed to parse objc stubs for image %s: %v", filepath.Base(i.Name), err)
 		}
 		i.Analysis.State.SetObjC(true)
 	}
@@ -832,7 +852,7 @@ func (i *CacheImage) ParseLocalSymbols(dump bool) error {
 			// w.Flush()
 
 			sort.Slice(i.LocalSymbols, func(j, k int) bool {
-				return i.LocalSymbols[j].Name <= i.LocalSymbols[k].Name
+				return i.LocalSymbols[j].Name < i.LocalSymbols[k].Name
 			})
 
 			i.Analysis.State.SetPrivates(true)
@@ -994,7 +1014,7 @@ func (i *CacheImage) ParsePublicSymbols(dump bool) error {
 		}
 
 		sort.Slice(i.PublicSymbols, func(j, k int) bool {
-			return i.PublicSymbols[j].Name <= i.PublicSymbols[k].Name
+			return i.PublicSymbols[j].Name < i.PublicSymbols[k].Name
 		})
 
 		i.Analysis.State.SetExports(true)

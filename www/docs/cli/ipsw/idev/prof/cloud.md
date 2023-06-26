@@ -5,9 +5,6 @@ hide_title: true
 hide_table_of_contents: true
 sidebar_label: cloud
 description: Get cloud configuration
-last_update:
-  date: 2023-01-10T12:52:46-07:00
-  author: blacktop
 ---
 ## ipsw idev prof cloud
 
@@ -28,7 +25,7 @@ ipsw idev prof cloud [flags]
 
 ```
       --color           colorize output
-      --config string   config file (default is $HOME/.ipsw/config.yaml)
+      --config string   config file (default is $HOME/.config/ipsw/config.yaml)
   -u, --udid string     Device UniqueDeviceID to connect to
   -V, --verbose         verbose output
 ```

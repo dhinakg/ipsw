@@ -1,5 +1,5 @@
 /*
-Copyright © 2018-2022 blacktop
+Copyright © 2023 blacktop
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -22,32 +22,44 @@ THE SOFTWARE.
 package kernel
 
 import (
-	"fmt"
-	"os"
-
 	"github.com/apex/log"
-	"github.com/blacktop/ipsw/pkg/kernelcache"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
 func init() {
-	KernelcacheCmd.AddCommand(diffCmd)
+	KernelcacheCmd.AddCommand(kernelDiffCmd)
+
+	// Here you will define your flags and configuration settings.
+
+	// Cobra supports Persistent Flags which will work for this command
+	// and all subcommands, e.g.:
+	// kernelDiffCmd.PersistentFlags().String("foo", "", "A help for foo")
+
+	// Cobra supports local flags which will only run when this command
+	// is called directly, e.g.:
+	// kernelDiffCmd.Flags().BoolP("toggle", "t", false, "Help message for toggle")
 }
 
-// diffCmd represents the diff command
-var diffCmd = &cobra.Command{
-	Use:    "diff",
-	Short:  "🚧 diff kernelcache (using assert strings)",
-	Args:   cobra.MinimumNArgs(1),
-	Hidden: true,
+// kernelDiffCmd represents the diff command
+var kernelDiffCmd = &cobra.Command{
+	Use:           "diff",
+	Short:         "Diff kernelcaches",
+	Args:          cobra.ExactArgs(2),
+	SilenceUsage:  true,
+	SilenceErrors: true,
+	Hidden:        true,
 	RunE: func(cmd *cobra.Command, args []string) error {
+
 		if viper.GetBool("verbose") {
 			log.SetLevel(log.DebugLevel)
 		}
-		if _, err := os.Stat(args[0]); os.IsNotExist(err) {
-			return fmt.Errorf("file %s does not exist", args[0])
-		}
-		return kernelcache.ParseMachO(args[0])
+
+		// FIXME: implement
+		panic("ipsw kernel diff - not implemented yet")
+
+		return nil
+
+		// return kernelcache.ParseMachO(args[0])
 	},
 }

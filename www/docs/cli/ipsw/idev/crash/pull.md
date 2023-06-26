@@ -4,14 +4,11 @@ title: pull
 hide_title: true
 hide_table_of_contents: true
 sidebar_label: pull
-description: Pull all crashlogs
-last_update:
-  date: 2023-01-10T12:52:46-07:00
-  author: blacktop
+description: Pull crashlogs
 ---
 ## ipsw idev crash pull
 
-Pull all crashlogs
+Pull crashlogs
 
 ```
 ipsw idev crash pull [flags]
@@ -22,7 +19,7 @@ ipsw idev crash pull [flags]
 ```
   -a, --all             Pull all crashlogs
   -h, --help            help for pull
-  -o, --output string   Folder to save screenshot(s)
+  -o, --output string   Folder to save crashlogs
   -r, --rm              Remove crashlogs after pulling
 ```
 
@@ -30,7 +27,7 @@ ipsw idev crash pull [flags]
 
 ```
       --color           colorize output
-      --config string   config file (default is $HOME/.ipsw/config.yaml)
+      --config string   config file (default is $HOME/.config/ipsw/config.yaml)
   -u, --udid string     Device UniqueDeviceID to connect to
   -V, --verbose         verbose output
 ```

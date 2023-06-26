@@ -1,5 +1,5 @@
 /*
-Copyright © 2018-2022 blacktop
+Copyright © 2018-2023 blacktop
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -27,9 +27,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 
 	"github.com/apex/log"
+	dscCmd "github.com/blacktop/ipsw/internal/commands/dsc"
 	"github.com/blacktop/ipsw/internal/utils"
 	"github.com/blacktop/ipsw/pkg/dyld"
 	"github.com/fatih/color"
@@ -52,6 +52,7 @@ func init() {
 // SymAddrCmd represents the symaddr command
 var SymAddrCmd = &cobra.Command{
 	Use:           "symaddr <dyld_shared_cache>",
+	Aliases:       []string{"sym"},
 	Short:         "Lookup or dump symbol(s)",
 	SilenceUsage:  false,
 	SilenceErrors: true,
@@ -99,147 +100,34 @@ var SymAddrCmd = &cobra.Command{
 			/******************************************
 			 * Search for symbols in JSON lookup file *
 			 ******************************************/
-			var enc *json.Encoder
-			var slin []dyld.Symbol
-			var slout []dyld.Symbol
+			var lookups []dscCmd.Symbol
 
-			symbolFile = filepath.Clean(symbolFile)
-			sdata, _ := os.ReadFile(symbolFile)
-
-			if err := json.Unmarshal(sdata, &slin); err != nil {
+			lookupData, err := os.ReadFile(filepath.Clean(symbolFile))
+			if err != nil {
+				return fmt.Errorf("failed to read symbol lookup JSON file %s: %v", symbolFile, err)
+			}
+			if err := json.Unmarshal(lookupData, &lookups); err != nil {
 				return fmt.Errorf("failed to parse symbol lookup JSON file %s: %v", symbolFile, err)
 			}
 
-			// group syms by image
-			symages := make(map[string][]dyld.Symbol)
-			for _, s := range slin {
-				if len(s.Image) > 0 {
-					image, err := f.Image(s.Image)
-					if err != nil {
-						return err
-					}
-					symages[image.Name] = append(symages[image.Name], s)
-				} else {
-					symages["unknown"] = append(symages["unknown"], s)
-				}
+			syms, err := dscCmd.GetSymbols(f, lookups)
+			if err != nil {
+				return fmt.Errorf("failed to lookup symbols from lookup JSON file: %v", err)
 			}
 
-			if _, uhoh := symages["unknown"]; uhoh {
-				log.Warn("you should supply 'image' fields for each symbol to GREATLY increase speed")
-			}
-
-			for imageName, syms := range symages {
-				if imageName == "unknown" {
-					for _, s := range syms {
-						found := false
-						for _, image := range f.Images {
-							if len(s.Regex) > 0 {
-								re, err := regexp.Compile(s.Regex)
-								if err != nil {
-									return err
-								}
-								m, err := image.GetPartialMacho()
-								if err != nil {
-									return err
-								}
-								image.ParseLocalSymbols(false)
-								for _, lsym := range image.LocalSymbols {
-									if re.MatchString(lsym.Name) {
-										var sec string
-										if lsym.Sect > 0 && int(lsym.Sect) <= len(m.Sections) {
-											sec = fmt.Sprintf("%s.%s", m.Sections[lsym.Sect-1].Seg, m.Sections[lsym.Sect-1].Name)
-										}
-										slout = append(slout, dyld.Symbol{
-											Name:    lsym.Name,
-											Address: lsym.Value,
-											Type:    lsym.Type.String(sec),
-											Image:   image.Name,
-											Kind:    dyld.LOCAL,
-										})
-									}
-								}
-								image.ParsePublicSymbols(false)
-								for _, sym := range image.PublicSymbols {
-									if re.MatchString(sym.Name) {
-										sym.Image = filepath.Base(image.Name)
-										slout = append(slout, *sym)
-									}
-								}
-							} else {
-								if sym, err := image.GetSymbol(s.Name); err == nil {
-									if sym.Address > 0 {
-										slout = append(slout, *sym)
-										found = true
-										break
-									}
-								}
-							}
-						}
-						if !found {
-							log.Errorf("failed to find address for symbol %s", s.Name)
-						}
-					}
-				} else {
-					image, err := f.Image(imageName)
-					if err != nil {
-						return err
-					}
-					for _, s := range syms {
-						if len(s.Regex) > 0 {
-							re, err := regexp.Compile(s.Regex)
-							if err != nil {
-								return err
-							}
-							m, err := image.GetPartialMacho()
-							if err != nil {
-								return err
-							}
-							image.ParseLocalSymbols(false)
-							for _, lsym := range image.LocalSymbols {
-								if re.MatchString(lsym.Name) {
-									var sec string
-									if lsym.Sect > 0 && int(lsym.Sect) <= len(m.Sections) {
-										sec = fmt.Sprintf("%s.%s", m.Sections[lsym.Sect-1].Seg, m.Sections[lsym.Sect-1].Name)
-									}
-									slout = append(slout, dyld.Symbol{
-										Name:    lsym.Name,
-										Address: lsym.Value,
-										Type:    lsym.Type.String(sec),
-										Image:   image.Name,
-										Kind:    dyld.LOCAL,
-									})
-								}
-							}
-							image.ParsePublicSymbols(false)
-							for _, sym := range image.PublicSymbols {
-								if re.MatchString(sym.Name) {
-									sym.Image = filepath.Base(image.Name)
-									slout = append(slout, *sym)
-								}
-							}
-						} else {
-							if sym, err := image.GetSymbol(s.Name); err == nil {
-								slout = append(slout, *sym)
-							} else {
-								log.Errorf("failed to find address for symbol %s in image %s", s.Name, filepath.Base(image.Name))
-							}
-						}
-					}
-				}
-			}
-
+			var enc *json.Encoder
 			if len(jsonFile) > 0 {
-				jFile, err := os.Create(jsonFile)
+				jf, err := os.Create(jsonFile)
 				if err != nil {
 					return err
 				}
-				defer jFile.Close()
-				enc = json.NewEncoder(jFile)
+				defer jf.Close()
+				enc = json.NewEncoder(jf)
 			} else {
 				enc = json.NewEncoder(os.Stdout)
 			}
 
-			if err := enc.Encode(slout); err != nil {
+			if err := enc.Encode(syms); err != nil {
 				return err
 			}
 
@@ -275,17 +163,22 @@ var SymAddrCmd = &cobra.Command{
 			 **********************************/
 			symChan, err := f.GetExportedSymbols(context.Background(), args[1])
 			if err != nil {
-				return err
-			}
-			for {
-				sym, ok := <-symChan
-				if !ok {
-					break
+				if !errors.Is(err, dyld.ErrNoPrebuiltLoadersInCache) {
+					return fmt.Errorf("failed to get exported symbols: %v", err)
 				}
-				fmt.Println(sym.String(viper.GetBool("color")))
+			} else {
+				for {
+					sym, ok := <-symChan
+					if !ok {
+						break
+					}
+					fmt.Println(sym.String(viper.GetBool("color")))
+					if !allMatches {
+						return nil
+					}
+				}
 			}
-
-			for _, image := range f.Images {
+			for _, image := range f.Images { // use brute force search
 				utils.Indent(log.Debug, 2)("Searching " + image.Name)
 				if sym, err := image.GetSymbol(args[1]); err == nil {
 					if (sym.Address > 0 || allMatches) && (sym.Kind != dyld.BIND || showBinds) {

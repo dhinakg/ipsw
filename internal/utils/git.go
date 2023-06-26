@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"io"
 	"os"
 	"os/exec"
 	"regexp"
@@ -12,16 +13,30 @@ import (
 	"golang.org/x/term"
 )
 
-func GitDiff(src, dst string) (string, error) {
-	if _, err := exec.LookPath("delta"); err == nil {
-		return createDeltaDiffPatch(src, dst)
-	} else if _, err := exec.LookPath("git"); err == nil {
-		return createGitDiffPatch(src, dst)
-	}
-	return createGoDiff(src, dst)
+type GitDiffConfig struct {
+	Tool  string
+	Color bool
 }
 
-func createGoDiff(src, dst string) (string, error) {
+func GitDiff(src, dst string, conf *GitDiffConfig) (string, error) {
+	switch conf.Tool {
+	case "delta":
+		return createDeltaDiffPatch(src, dst, conf)
+	case "git":
+		return createGitDiffPatch(src, dst, conf)
+	case "go":
+		return createGoDiff(src, dst, conf)
+	default:
+		if _, err := exec.LookPath("delta"); err == nil {
+			return createDeltaDiffPatch(src, dst, conf)
+		} else if _, err := exec.LookPath("git"); err == nil {
+			return createGitDiffPatch(src, dst, conf)
+		}
+		return createGoDiff(src, dst, conf)
+	}
+}
+
+func createGoDiff(src, dst string, conf *GitDiffConfig) (string, error) {
 	dmp := diffmatchpatch.New()
 
 	diffs := dmp.DiffMain(src, dst, false)
@@ -39,8 +54,7 @@ func createGoDiff(src, dst string) (string, error) {
 	return dmp.DiffPrettyText(diffs), nil
 }
 
-func createGitDiffPatch(src, dst string) (string, error) {
-
+func createGitDiffPatch(src, dst string, conf *GitDiffConfig) (string, error) {
 	tmpSrc, err := os.CreateTemp("", "src")
 	if err != nil {
 		return "", err
@@ -70,17 +84,18 @@ func createGitDiffPatch(src, dst string) (string, error) {
 	// strip the @@ gap lines
 	re := regexp.MustCompile("(?m)^@@ .*$")
 	out = re.ReplaceAllString(out, "")
-	// colorize the diff
-	b := new(strings.Builder)
-	if err := quick.Highlight(b, out, "diff", "terminal16m", "nord"); err != nil {
-		return "", err
+	if conf.Color {
+		// colorize the diff
+		b := new(strings.Builder)
+		if err := quick.Highlight(b, out, "diff", "terminal256", "nord"); err != nil {
+			return "", err
+		}
+		return b.String(), nil
 	}
-
-	return b.String(), nil
+	return out, nil
 }
 
-func createDeltaDiffPatch(src, dst string) (string, error) {
-
+func createDeltaDiffPatch(src, dst string, conf *GitDiffConfig) (string, error) {
 	tmpSrc, err := os.CreateTemp("", "src")
 	if err != nil {
 		return "", err
@@ -126,4 +141,41 @@ func createDeltaDiffPatch(src, dst string) (string, error) {
 	// }
 
 	return string(out), nil
+}
+
+func ClangFormat(src, filename string, color bool) string {
+	if _, err := exec.LookPath("clang-format"); err == nil {
+		cmd := exec.Command(
+			"clang-format",
+			"-style={AlignConsecutiveDeclarations: true}",
+			"--assume-filename",
+			filename,
+		)
+		stdin, err := cmd.StdinPipe()
+		if err != nil {
+			return src
+		}
+
+		go func() {
+			defer stdin.Close()
+			io.WriteString(stdin, src)
+		}()
+
+		out, _ := cmd.CombinedOutput()
+		// if err != nil {
+		// 	return "", fmt.Errorf("clang-format failed %s: %v", out, err)
+		// }
+
+		src = string(out)
+	}
+
+	if color {
+		b := new(strings.Builder)
+		if err := quick.Highlight(b, src, "c", "terminal256", "nord"); err != nil {
+			return ""
+		}
+		return b.String()
+	}
+
+	return src
 }

@@ -1,5 +1,5 @@
 /*
-Copyright © 2018-2022 blacktop
+Copyright © 2018-2023 blacktop
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -46,6 +46,17 @@ import (
 	"github.com/spf13/viper"
 )
 
+var otaDlCmdPlatforms = []string{
+	"ios\tiOS",
+	"watchos\twatchOS",
+	"tvos\ttvOS",
+	"audioos\tAudioOS",
+	"accessory\tAccessory: Studio Display, etc.",
+	"macos\tmacOS",
+	"recovery\trecoveryOS",
+	"visionos\tvisionOS",
+}
+
 func init() {
 	DownloadCmd.AddCommand(otaDLCmd)
 
@@ -80,13 +91,18 @@ func init() {
 	viper.BindPFlag("download.ota.show-latest-version", otaDLCmd.Flags().Lookup("show-latest-version"))
 	viper.BindPFlag("download.ota.show-latest-build", otaDLCmd.Flags().Lookup("show-latest-build"))
 
+	otaDLCmd.MarkFlagDirname("output")
 	otaDLCmd.MarkFlagsMutuallyExclusive("info", "beta")
+	otaDLCmd.RegisterFlagCompletionFunc("platform", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		return otaDlCmdPlatforms, cobra.ShellCompDirectiveDefault
+	})
 }
 
 // otaDLCmd represents the ota download command
 var otaDLCmd = &cobra.Command{
-	Use:   "ota [options]",
-	Short: "Download OTAs",
+	Use:     "ota [options]",
+	Aliases: []string{"o"},
+	Short:   "Download OTAs",
 	Example: `  # Download the iOS 14.8.1 OTA for the iPhone10,1
   ❯ ipsw download ota --platform ios --version 14.8.1 --device iPhone10,1
     ? You are about to download 1 OTA files. Continue? Yes
@@ -160,10 +176,10 @@ var otaDLCmd = &cobra.Command{
 			}
 		}
 		if len(platform) == 0 {
-			return fmt.Errorf("you must supply a valid --platform flag. Choices are: ios, watchos, tvos, audioos || accessory, macos, recovery")
+			return fmt.Errorf("you must supply a valid --platform flag. Choices are: ios, watchos, tvos, audioos, visionos || accessory, macos, recovery")
 		} else {
-			if !utils.StrSliceHas([]string{"ios", "macos", "recovery", "watchos", "tvos", "audioos", "accessory"}, platform) {
-				return fmt.Errorf("valid --platform flag choices are: ios, watchos, tvos, audioos || accessory, macos, recovery")
+			if !utils.StrSliceHas([]string{"ios", "macos", "recovery", "watchos", "tvos", "audioos", "accessory", "visionos"}, platform) {
+				return fmt.Errorf("valid --platform flag choices are: ios, watchos, tvos, audioos, visionos || accessory, macos, recovery")
 			}
 		}
 		if (showLatestVersion || showLatestBuild) && len(device) == 0 {
@@ -203,6 +219,8 @@ var otaDLCmd = &cobra.Command{
 					otaInfoType = "iOS"
 				} else if utils.StrSliceHas([]string{"macos", "recovery"}, platform) {
 					otaInfoType = "macOS"
+				} else if utils.StrSliceHas([]string{"visionos"}, platform) {
+					otaInfoType = "xrOS"
 				} else {
 					log.Errorf("--info flag does not support platform '%s'", platform)
 				}
@@ -244,7 +262,7 @@ var otaDLCmd = &cobra.Command{
 			DeviceBlackList: doNotDownload,
 			Proxy:           proxy,
 			Insecure:        insecure,
-			TimeoutSeconds:  90,
+			Timeout:         90,
 		})
 		if err != nil {
 			return fmt.Errorf("failed to parse remote OTA XML: %v", err)
@@ -324,6 +342,7 @@ var otaDLCmd = &cobra.Command{
 						"devices": fmt.Sprintf("%s... (count=%d)", strings.Join(o.SupportedDevices[:3], " "), len(o.SupportedDevices)),
 						"model":   strings.Join(o.SupportedDeviceModels, " "),
 					}).Info(fmt.Sprintf("Getting %s remote OTA", o.DocumentationID))
+
 					zr, err := download.NewRemoteZipReader(o.BaseURL+o.RelativePath, &download.RemoteConfig{
 						Proxy:    proxy,
 						Insecure: insecure,
@@ -331,9 +350,19 @@ var otaDLCmd = &cobra.Command{
 					if err != nil {
 						return fmt.Errorf("failed to open remote zip to OTA: %v", err)
 					}
+					inf, err := info.ParseZipFiles(zr.File)
+					if err != nil {
+						return fmt.Errorf("failed to parse remote IPSW metadata: %v", err)
+					}
+					folder, err := inf.GetFolder()
+					if err != nil {
+						log.Errorf("failed to get folder from remote zip metadata: %v", err)
+					}
+					destPath = filepath.Join(destPath, folder)
+
 					if remoteKernel { // REMOTE KERNEL MODE
 						log.Info("Extracting remote kernelcache")
-						err = kernelcache.RemoteParse(zr, destPath)
+						_, err = kernelcache.RemoteParse(zr, destPath)
 						if err != nil {
 							return fmt.Errorf("failed to download kernelcache from remote ota: %v", err)
 						}
@@ -342,7 +371,7 @@ var otaDLCmd = &cobra.Command{
 						found := false
 						if runtime.GOOS == "darwin" { // FIXME: figure out how to do this on all platforms
 							log.Info("Extracting remote dyld_shared_cache")
-							if err := dyld.ExtractFromRemoteCryptex(zr, destPath, dyldArches); err != nil {
+							if err := dyld.ExtractFromRemoteCryptex(zr, destPath, dyldArches, false); err != nil { // TODO: assuming user doesn't want DriverKit cache
 								log.Errorf("failed to download dyld_shared_cache from remote OTA: %v", err)
 							}
 							found = true
@@ -351,10 +380,8 @@ var otaDLCmd = &cobra.Command{
 							var dscRegex string
 							if dyldDriverKit {
 								dscRegex = fmt.Sprintf("%s(%s)%s", dyld.DriverKitCacheRegex, strings.Join(dyldArches, "|"), dyld.CacheRegexEnding)
-							} else if utils.StrSliceHas([]string{"macos", "recovery"}, strings.ToLower(platform)) {
-								dscRegex = fmt.Sprintf("%s(%s)%s", dyld.MacOSCacheRegex, strings.Join(dyldArches, "|"), dyld.CacheRegexEnding)
 							} else {
-								dscRegex = fmt.Sprintf("%s(%s)%s", dyld.IPhoneCacheRegex, strings.Join(dyldArches, "|"), dyld.CacheRegexEnding)
+								dscRegex = fmt.Sprintf("%s(%s)%s", dyld.CacheRegex, strings.Join(dyldArches, "|"), dyld.CacheRegexEnding)
 							}
 							// hack: to get a priori list of files to extract (so we know when to stop)
 							rfiles, err := ota.RemoteList(zr)
@@ -384,16 +411,12 @@ var otaDLCmd = &cobra.Command{
 						}
 					}
 					if len(remotePattern) > 0 { // REMOTE PATTERN MATCHING MODE
+						re, err := regexp.Compile(remotePattern)
+						if err != nil {
+							return fmt.Errorf("failed to compile regex for pattern '%s': %v", remotePattern, err)
+						}
 						log.Infof("Downloading files matching pattern %#v", remotePattern)
-						iinfo, err := info.ParseZipFiles(zr.File)
-						if err != nil {
-							return errors.Wrap(err, "failed to parse remote ipsw")
-						}
-						folder, err := iinfo.GetFolder()
-						if err != nil {
-							log.Errorf("failed to get folder from remote ipsw metadata: %v", err)
-						}
-						if err := utils.RemoteUnzip(zr.File, regexp.MustCompile(remotePattern), filepath.Join(destPath, folder), flat); err != nil {
+						if _, err := utils.SearchZip(zr.File, re, destPath, flat, true); err != nil {
 							utils.Indent(log.Warn, 2)("0 files matched pattern in remote OTA zip. Now checking payloadv2 payloads...")
 							rfiles, err := ota.RemoteList(zr)
 							if err != nil {
@@ -401,7 +424,7 @@ var otaDLCmd = &cobra.Command{
 							}
 							var matches []string
 							for _, rf := range rfiles {
-								if regexp.MustCompile(remotePattern).MatchString(rf.Name()) {
+								if re.MatchString(rf.Name()) {
 									matches = append(matches, rf.Name())
 								}
 							}
@@ -430,13 +453,25 @@ var otaDLCmd = &cobra.Command{
 					var devices string
 					if len(o.SupportedDevices) > 0 {
 						sort.Strings(o.SupportedDevices)
-						devices = strings.Join(o.SupportedDevices, "_")
+						if len(o.SupportedDevices) > 5 {
+							devices = fmt.Sprintf("%s_and_%d_others", o.SupportedDevices[0], len(o.SupportedDevices)-1)
+						} else {
+							devices = strings.Join(o.SupportedDevices, "_")
+						}
 					} else {
 						sort.Strings(o.SupportedDeviceModels)
-						devices = strings.Join(o.SupportedDeviceModels, "_")
+						if len(o.SupportedDeviceModels) > 5 {
+							devices = fmt.Sprintf("%s_and_%d_others", o.SupportedDeviceModels[0], len(o.SupportedDeviceModels)-1)
+						} else {
+							devices = strings.Join(o.SupportedDeviceModels, "_")
+						}
 					}
 					url := o.BaseURL + o.RelativePath
-					destName := filepath.Join(folder, fmt.Sprintf("%s_%s", devices, getDestName(url, removeCommas)))
+					var isRSR string
+					if o.SplatOnly {
+						isRSR = fmt.Sprintf("%s_%s_%s_RSR_", o.OSVersion, o.ProductVersionExtra, o.Build)
+					}
+					destName := filepath.Join(folder, fmt.Sprintf("%s%s_%s", isRSR, devices, getDestName(url, removeCommas)))
 					if _, err := os.Stat(destName); os.IsNotExist(err) {
 						log.WithFields(log.Fields{
 							"device": strings.Join(o.SupportedDevices, " "),
@@ -450,8 +485,10 @@ var otaDLCmd = &cobra.Command{
 						if err := downloader.Do(); err != nil {
 							return fmt.Errorf("failed to download file: %v", err)
 						}
+					} else if err != nil {
+						return fmt.Errorf("failed to stat file %s: %v", destName, err)
 					} else {
-						log.Warnf("ota already exists: %s", destName)
+						log.Warnf("OTA already exists: %s", destName)
 					}
 				}
 			}

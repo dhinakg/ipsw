@@ -1,0 +1,24 @@
+[Unit]
+Description=ipsw daemon
+Documentation=https://blacktop.github.io/ipsw
+
+[Service]
+Environment=PATH=/usr/bin:/sbin:/usr/sbin:$PATH
+ExecStart=/usr/bin/ipswd start --config /etc/ipswd/config.yml
+ExecReload=/bin/kill -s HUP \$MAINPID
+TimeoutSec=0
+RestartSec=2
+Restart=always
+StartLimitBurst=3
+StartLimitInterval=60s
+LimitNOFILE=infinity
+LimitNPROC=infinity
+LimitCORE=infinity
+TasksMax=infinity
+Delegate=yes
+Type=notify
+NotifyAccess=all
+KillMode=mixed
+
+[Install]
+WantedBy=default.target

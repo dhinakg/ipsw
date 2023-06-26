@@ -5,9 +5,6 @@ hide_title: true
 hide_table_of_contents: true
 sidebar_label: img
 description: Image commands
-last_update:
-  date: 2023-01-10T12:52:46-07:00
-  author: blacktop
 ---
 ## ipsw idev img
 
@@ -27,7 +24,7 @@ ipsw idev img [flags]
 
 ```
       --color           colorize output
-      --config string   config file (default is $HOME/.ipsw/config.yaml)
+      --config string   config file (default is $HOME/.config/ipsw/config.yaml)
   -u, --udid string     Device UniqueDeviceID to connect to
   -V, --verbose         verbose output
 ```
@@ -38,5 +35,6 @@ ipsw idev img [flags]
 * [ipsw idev img lookup](/docs/cli/ipsw/idev/img/lookup)	 - Lookup image type
 * [ipsw idev img ls](/docs/cli/ipsw/idev/img/ls)	 - List mounted images
 * [ipsw idev img mount](/docs/cli/ipsw/idev/img/mount)	 - Mount an image
+* [ipsw idev img nonce](/docs/cli/ipsw/idev/img/nonce)	 - Query Nonce
 * [ipsw idev img unmount](/docs/cli/ipsw/idev/img/unmount)	 - Unmount an image
 

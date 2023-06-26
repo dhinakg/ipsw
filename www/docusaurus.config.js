@@ -27,7 +27,10 @@ const config = {
     defaultLocale: "en",
     locales: ["en"],
   },
-
+  markdown: {
+    mermaid: true,
+  },
+  themes: ["@docusaurus/theme-mermaid"],
   presets: [
     [
       "classic",
@@ -58,8 +61,30 @@ const config = {
         },
       }),
     ],
+    [
+      "redocusaurus",
+      /** @type {import('redocusaurus').PresetEntry} */
+      ({
+        // Plugin Options for loading OpenAPI files
+        specs: [
+          {
+            spec: "api/swagger.json",
+            route: "/api",
+            layout: {
+              title: "ipsw API",
+              noFooter: true,
+            },
+          },
+        ],
+        // Theme Options for modifying how redoc renders them
+        theme: {
+          // Change with your site colors
+          primaryColor: "#503B9F",
+        },
+      }),
+    ],
   ],
-
+  // plugins: [require.resolve("@cmfcmf/docusaurus-search-local")],
   themeConfig:
     /** @type {import('@docusaurus/preset-classic').ThemeConfig} */
     ({
@@ -83,13 +108,13 @@ const config = {
         theme: lightCodeTheme,
         darkTheme: darkCodeTheme,
         themes: [path.resolve(__dirname, "/src/themes/prism-nord")],
-        additionalLanguages: ["armasm"],
+        additionalLanguages: ["armasm", "llvm"],
       },
-      algolia: {
-        appId: "XN7OVST81R",
-        apiKey: "493729d49a9639b14fe433a033ef5992",
-        indexName: "ipsw",
-      },
+      // algolia: {
+      //   appId: "XN7OVST81R",
+      //   apiKey: "493729d49a9639b14fe433a033ef5992",
+      //   indexName: "ipsw",
+      // },
       navbar: {
         hideOnScroll: true,
         title: "ipsw",
@@ -112,6 +137,12 @@ const config = {
             position: "left",
             sidebarId: "cli",
             label: "CLI",
+          },
+          {
+            label: "API",
+            to: "/api",
+            position: "left",
+            sidebarId: "api",
           },
           // Right
           {

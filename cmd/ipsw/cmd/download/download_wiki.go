@@ -1,5 +1,5 @@
 /*
-Copyright © 2022 blacktop
+Copyright © 2018-2023 blacktop
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -24,17 +24,21 @@ package download
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/apex/log"
+	"github.com/blacktop/ipsw/internal/commands/extract"
 	"github.com/blacktop/ipsw/internal/download"
 	"github.com/blacktop/ipsw/internal/utils"
 	"github.com/blacktop/ipsw/pkg/info"
 	"github.com/blacktop/ipsw/pkg/kernelcache"
+	"github.com/blacktop/ipsw/pkg/ota"
 	"github.com/blacktop/ipsw/pkg/plist"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -42,10 +46,13 @@ import (
 
 func init() {
 	DownloadCmd.AddCommand(wikiCmd)
+	wikiCmd.Flags().Bool("ipsw", false, "Download IPSWs")
+	wikiCmd.Flags().Bool("ota", false, "Download OTAs")
 	wikiCmd.Flags().Bool("kernel", false, "Extract kernelcache from remote IPSW")
 	wikiCmd.Flags().String("pattern", "", "Download remote files that match regex")
 	wikiCmd.Flags().Bool("beta", false, "Download beta IPSWs/OTAs")
-	wikiCmd.Flags().Bool("ota", false, "Download OTAs 🚧")
+	wikiCmd.Flags().String("pv", "", "OTA prerequisite version")
+	wikiCmd.Flags().String("pb", "", "OTA prerequisite build")
 	wikiCmd.Flags().Bool("json", false, "Parse URLs and store metadata in local JSON database")
 	wikiCmd.Flags().StringP("output", "o", "", "Folder to download files to")
 	wikiCmd.Flags().String("db", "wiki_db.json", "Path to local JSON database (will use CWD by default)")
@@ -56,19 +63,25 @@ func init() {
 		DownloadCmd.PersistentFlags().MarkHidden("model") // TODO: remove this?
 		c.Parent().HelpFunc()(c, s)
 	})
+	viper.BindPFlag("download.wiki.ipsw", wikiCmd.Flags().Lookup("ipsw"))
+	viper.BindPFlag("download.wiki.ota", wikiCmd.Flags().Lookup("ota"))
 	viper.BindPFlag("download.wiki.kernel", wikiCmd.Flags().Lookup("kernel"))
 	viper.BindPFlag("download.wiki.pattern", wikiCmd.Flags().Lookup("pattern"))
 	viper.BindPFlag("download.wiki.beta", wikiCmd.Flags().Lookup("beta"))
-	viper.BindPFlag("download.wiki.ota", wikiCmd.Flags().Lookup("ota"))
+	viper.BindPFlag("download.wiki.pv", wikiCmd.Flags().Lookup("pv"))
+	viper.BindPFlag("download.wiki.pb", wikiCmd.Flags().Lookup("pb"))
 	viper.BindPFlag("download.wiki.json", wikiCmd.Flags().Lookup("json"))
 	viper.BindPFlag("download.wiki.output", wikiCmd.Flags().Lookup("output"))
 	viper.BindPFlag("download.wiki.db", wikiCmd.Flags().Lookup("db"))
 	viper.BindPFlag("download.wiki.flat", wikiCmd.Flags().Lookup("flat"))
+
+	wikiCmd.MarkFlagsMutuallyExclusive("ipsw", "ota")
 }
 
 // wikiCmd represents the wiki command
 var wikiCmd = &cobra.Command{
 	Use:           "wiki",
+	Aliases:       []string{"w"},
 	Short:         "Download old(er) IPSWs from theiphonewiki.com",
 	Args:          cobra.NoArgs,
 	SilenceUsage:  true,
@@ -103,14 +116,22 @@ var wikiCmd = &cobra.Command{
 		version := viper.GetString("download.version")
 		build := viper.GetString("download.build")
 		// flags
+		dlIPSWs := viper.GetBool("download.wiki.ipsw")
+		dlOTAs := viper.GetBool("download.wiki.ota")
 		kernel := viper.GetBool("download.wiki.kernel")
 		pattern := viper.GetString("download.wiki.pattern")
 		output := viper.GetString("download.wiki.output")
 		flat := viper.GetBool("download.wiki.flat")
 
-		// verify args
+		// validate flags
+		if !dlIPSWs && !dlOTAs {
+			return fmt.Errorf("must specify one of --ipsw or --ota")
+		}
+		if len(device) == 0 && len(version) == 0 && len(build) == 0 {
+			return fmt.Errorf("must specify at least one of --device, --version, or --build")
+		}
 		if kernel && len(pattern) > 0 {
-			return fmt.Errorf("you cannot supply a --kernel AND a --pattern (they are mutually exclusive)")
+			return fmt.Errorf("cannot use --kernel and --pattern together")
 		}
 
 		var destPath string
@@ -118,10 +139,266 @@ var wikiCmd = &cobra.Command{
 			destPath = filepath.Clean(output)
 		}
 
-		if viper.GetBool("download.wiki.ota") { //OTAs
-			otas, err := download.ScrapeOTAs(viper.GetBool("download.wiki.beta"))
+		if dlIPSWs { /* DOWNLOAD IPSWs */
+			ipsws, err := download.GetWikiIPSWs(&download.WikiConfig{
+				Device:  device,
+				Version: version,
+				Build:   build,
+				IPSW:    dlIPSWs,
+				OTA:     dlOTAs,
+				Beta:    viper.GetBool("download.wiki.beta"),
+			}, proxy, insecure)
 			if err != nil {
 				return fmt.Errorf("failed querying theiphonewiki.com: %v", err)
+			}
+
+			// ipsws, err := download.ScrapeIPSWs(viper.GetBool("download.wiki.beta"))
+			// if err != nil {
+			// 	return fmt.Errorf("failed querying theiphonewiki.com: %v", err)
+			// }
+
+			var filteredIPSW []download.WikiFirmware
+			for _, ipsw := range ipsws {
+				if len(version) > 0 || len(build) > 0 {
+					if strings.HasPrefix(ipsw.Version, version) || strings.EqualFold(ipsw.Build, build) {
+						if len(device) > 0 {
+							for _, dev := range ipsw.Devices {
+								if strings.EqualFold(dev, device) {
+									if _, err := url.ParseRequestURI(ipsw.URL); err == nil {
+										filteredIPSW = append(filteredIPSW, ipsw)
+										break
+									}
+								}
+							}
+						} else {
+							if _, err := url.ParseRequestURI(ipsw.URL); err == nil {
+								filteredIPSW = append(filteredIPSW, ipsw)
+							}
+						}
+					}
+				} else {
+					if len(device) > 0 {
+						for _, dev := range ipsw.Devices {
+							if strings.EqualFold(dev, device) {
+								if _, err := url.ParseRequestURI(ipsw.URL); err == nil {
+									filteredIPSW = append(filteredIPSW, ipsw)
+									break
+								}
+							}
+						}
+					} else {
+						if _, err := url.ParseRequestURI(ipsw.URL); err == nil {
+							filteredIPSW = append(filteredIPSW, ipsw)
+						}
+					}
+				}
+			}
+
+			if viper.GetBool("download.wiki.json") {
+				db := make(map[string]*info.Info)
+				if f, err := os.Open(viper.GetString("download.wiki.db")); err == nil { // try and load existing DB
+					log.Info("Found existsing iphonewiki DB, loading...")
+					defer f.Close()
+					if err := json.NewDecoder(f).Decode(&db); err != nil {
+						return fmt.Errorf("failed to decode JSON database: %v", err)
+					}
+					f.Close()
+				}
+				for idx, ipsw := range filteredIPSW {
+					log.Debugf("Parsing IPSW %s", ipsw.URL)
+					defer func() {
+						// try and write out DB JSON on exit if possible
+						dat, err := json.Marshal(db)
+						if err != nil {
+							log.Errorf("failed to marshal IPSW metadata: %v", err)
+						}
+						if err := os.WriteFile(viper.GetString("download.wiki.db"), dat, 0660); err != nil {
+							log.Errorf("failed to write IPSW metadata: %v", err)
+						}
+					}()
+					zr, err := download.NewRemoteZipReader(ipsw.URL, &download.RemoteConfig{
+						Proxy:    proxy,
+						Insecure: insecure,
+					})
+					if err != nil {
+						log.Errorf("failed to create remote zip reader of ipsw: %v", err)
+						db[ipsw.URL] = &info.Info{
+							Plists: &plist.Plists{
+								Type: "Dead IPSW",
+							},
+						}
+						continue
+					}
+					i, err := info.ParseZipFiles(zr.File)
+					if err != nil {
+						log.Errorf("failed parsing remote IPSW URL: %v", err)
+						continue
+					}
+					log.WithFields(log.Fields{
+						"devices": i.Plists.Restore.SupportedProductTypes,
+						"build":   i.Plists.BuildManifest.ProductBuildVersion,
+						"version": i.Plists.BuildManifest.ProductVersion,
+					}).Infof("Parsing (%d/%d) IPSW", idx+1, len(filteredIPSW))
+					db[ipsw.URL] = i
+				}
+				dat, err := json.Marshal(db)
+				if err != nil {
+					return fmt.Errorf("failed to marshal IPSW metadata: %v", err)
+				}
+				if err := os.WriteFile(viper.GetString("download.wiki.db"), dat, 0660); err != nil {
+					return fmt.Errorf("failed to write IPSW metadata: %v", err)
+				}
+			} else {
+				log.Debug("URLs to download:")
+				for _, ipsw := range filteredIPSW {
+					utils.Indent(log.Debug, 2)(ipsw.URL)
+				}
+
+				cont := true
+				if !confirm {
+					if len(filteredIPSW) > 1 { // if filtered to a single device skip the prompt
+						cont = false
+						prompt := &survey.Confirm{
+							Message: fmt.Sprintf("You are about to download %d IPSW files. Continue?", len(filteredIPSW)),
+						}
+						survey.AskOne(prompt, &cont)
+					}
+				}
+
+				if cont {
+					if kernel || len(pattern) > 0 {
+						for _, ipsw := range filteredIPSW {
+							d, v, b := download.ParseIpswURLString(ipsw.URL)
+							log.WithFields(log.Fields{"devices": d, "build": b, "version": v}).Info("Parsing remote IPSW")
+
+							config := &extract.Config{
+								URL:      ipsw.URL,
+								Pattern:  pattern,
+								Proxy:    proxy,
+								Insecure: insecure,
+								Flatten:  flat,
+								Progress: true,
+								Output:   destPath,
+							}
+
+							// REMOTE KERNEL MODE
+							if kernel {
+								log.Info("Extracting remote kernelcache")
+								if _, err := extract.Kernelcache(config); err != nil {
+									return fmt.Errorf("failed to extract kernelcache from remote IPSW: %v", err)
+								}
+							}
+							// PATTERN MATCHING MODE
+							if len(pattern) > 0 {
+								log.Infof("Downloading files matching pattern %#v", pattern)
+								if _, err := extract.Search(config); err != nil {
+									return err
+								}
+							}
+						}
+					} else { // NORMAL MODE
+						for _, ipsw := range filteredIPSW {
+							destName := getDestName(ipsw.URL, removeCommas)
+							if len(destPath) > 0 {
+								destName = filepath.Join(filepath.Clean(destPath), destName)
+							}
+							if err := os.MkdirAll(filepath.Dir(destName), 0755); err != nil {
+								return fmt.Errorf("failed to create directory: %v", err)
+							}
+							if _, err := os.Stat(destName); os.IsNotExist(err) {
+								log.WithFields(log.Fields{
+									"devices": ipsw.Devices,
+									"build":   ipsw.Build,
+									"version": fmt.Sprintf("%s%s", ipsw.Version, ipsw.VersionExtra),
+								}).Info("Getting IPSW")
+
+								downloader := download.NewDownload(proxy, insecure, skipAll, resumeAll, restartAll, false, viper.GetBool("verbose"))
+								downloader.URL = ipsw.URL
+								downloader.Sha1 = ipsw.Sha1Hash
+								downloader.DestName = destName
+
+								// append sha1 and filename to checksums file
+								f, err := os.OpenFile("checksums.txt.sha1", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+								if err != nil {
+									return fmt.Errorf("failed to open checksums.txt.sha1: %v", err)
+								}
+								defer f.Close()
+
+								if _, err = f.WriteString(ipsw.Sha1Hash + "  " + destName + "\n"); err != nil {
+									return fmt.Errorf("failed to write to checksums.txt.sha1: %v", err)
+								}
+							} else {
+								log.Warnf("IPSW already exists: %s", destName)
+							}
+						}
+					}
+				}
+			}
+		} else { /* DOWNLOAD OTAs */
+			otas, err := download.GetWikiOTAs(&download.WikiConfig{
+				Device:  device,
+				Version: version,
+				Build:   build,
+				IPSW:    dlIPSWs,
+				OTA:     dlOTAs,
+				Beta:    viper.GetBool("download.wiki.beta"),
+			}, proxy, insecure)
+			if err != nil {
+				return fmt.Errorf("failed querying theiphonewiki.com: %v", err)
+			}
+
+			// otas, err := download.ScrapeOTAs(viper.GetBool("download.wiki.beta"))
+			// if err != nil {
+			// 	return fmt.Errorf("failed querying theiphonewiki.com: %v", err)
+			// }
+
+			uniqueAppend := func(slice []download.WikiFirmware, i download.WikiFirmware) []download.WikiFirmware {
+				for _, ele := range slice {
+					if ele.URL == i.URL {
+						return slice
+					}
+				}
+				return append(slice, i)
+			}
+
+			var filteredOTAs []download.WikiFirmware
+			for _, ota := range otas {
+				if len(version) > 0 || len(build) > 0 {
+					if strings.HasPrefix(ota.Version, version) || strings.EqualFold(ota.Build, build) {
+						log.Debugf("prerequisite version: %s, prerequisite build: %s", viper.GetString("download.wiki.pv"), viper.GetString("download.wiki.pb"))
+						if !strings.EqualFold(ota.PrerequisiteVersion, viper.GetString("download.wiki.pv")) &&
+							!strings.EqualFold(ota.Build, viper.GetString("download.wiki.pb")) {
+							continue
+						}
+						if len(device) > 0 {
+							for _, dev := range ota.Devices {
+								if strings.EqualFold(dev, device) {
+									if _, err := url.ParseRequestURI(ota.URL); err == nil {
+										filteredOTAs = uniqueAppend(filteredOTAs, ota)
+									}
+								}
+							}
+						} else {
+							if _, err := url.ParseRequestURI(ota.URL); err == nil {
+								filteredOTAs = uniqueAppend(filteredOTAs, ota)
+							}
+						}
+					}
+				} else {
+					if len(device) > 0 {
+						for _, dev := range ota.Devices {
+							if strings.EqualFold(dev, device) {
+								if _, err := url.ParseRequestURI(ota.URL); err == nil {
+									filteredOTAs = uniqueAppend(filteredOTAs, ota)
+								}
+							}
+						}
+					} else {
+						if _, err := url.ParseRequestURI(ota.URL); err == nil {
+							filteredOTAs = uniqueAppend(filteredOTAs, ota)
+						}
+					}
+				}
 			}
 
 			if viper.GetBool("download.wiki.json") {
@@ -144,16 +421,16 @@ var wikiCmd = &cobra.Command{
 						log.Errorf("failed to write OTA metadata: %v", err)
 					}
 				}()
-				for idx, url := range otas {
-					if _, ok := db[url]; !ok { // if NOT already in DB
-						log.Debugf("Parsing OTA %s", url)
-						zr, err := download.NewRemoteZipReader(url, &download.RemoteConfig{
+				for idx, ota := range otas {
+					if _, ok := db[ota.URL]; !ok { // if NOT already in DB
+						log.Debugf("Parsing OTA %s", ota.URL)
+						zr, err := download.NewRemoteZipReader(ota.URL, &download.RemoteConfig{
 							Proxy:    proxy,
 							Insecure: insecure,
 						})
 						if err != nil {
 							log.Errorf("failed to create remote zip reader of ipsw: %v", err)
-							db[url] = info.InfoJSON{
+							db[ota.URL] = info.InfoJSON{
 								Type:  "DEAD OTA",
 								Error: err.Error(),
 							}
@@ -176,7 +453,7 @@ var wikiCmd = &cobra.Command{
 						// if err := os.WriteFile(filepath.Join(destPath, fmt.Sprintf("ota_db_%d.json", idx)), dat, 0660); err != nil {
 						// 	return fmt.Errorf("failed to write OTA metadata: %v", err)
 						// }
-						db[url] = i.ToJSON()
+						db[ota.URL] = i.ToJSON()
 						dat, err := json.Marshal(db)
 						if err != nil {
 							return fmt.Errorf("failed to marshal OTA metadata: %v", err)
@@ -185,189 +462,129 @@ var wikiCmd = &cobra.Command{
 							return fmt.Errorf("failed to write OTA metadata: %v", err)
 						}
 					} else {
-						log.Debugf("Skipping OTA (%d/%d) %s", idx, len(otas), url)
+						log.Debugf("Skipping OTA (%d/%d) %s", idx, len(otas), ota.URL)
 					}
 				}
 			} else {
-				downloader := download.NewDownload(proxy, insecure, skipAll, resumeAll, restartAll, false, viper.GetBool("verbose"))
-				for idx, url := range otas {
-					fname := filepath.Join(destPath, getDestName(url, removeCommas))
-					if _, err := os.Stat(fname); os.IsNotExist(err) {
-						zr, err := download.NewRemoteZipReader(url, &download.RemoteConfig{
-							Proxy:    proxy,
-							Insecure: insecure,
-						})
-						if err != nil {
-							return fmt.Errorf("failed to create remote zip reader of ipsw: %v", err)
-						}
-						i, err := info.ParseZipFiles(zr.File)
-						if err != nil {
-							return fmt.Errorf("failed parsing remote OTA URL: %v", err)
-						}
-						log.WithFields(log.Fields{
-							"devices": i.Plists.MobileAssetProperties.SupportedDevices,
-							"build":   i.Plists.BuildManifest.ProductBuildVersion,
-							"version": i.Plists.BuildManifest.ProductVersion,
-						}).Infof("Getting (%d/%d) OTA", idx+1, len(otas))
-						// download file
-						downloader.URL = url
-						downloader.DestName = fname
-
-						err = downloader.Do()
-						if err != nil {
-							return fmt.Errorf("failed to download OTA: %v", err)
-						}
-					} else {
-						log.Warnf("OTA already exists: %s", fname)
-					}
-				}
-			}
-		} else { // IPSWs
-			ipsws, err := download.ScrapeIPSWs(viper.GetBool("download.wiki.beta"))
-			if err != nil {
-				return fmt.Errorf("failed querying theiphonewiki.com: %v", err)
-			}
-
-			filteredURLS := download.FilterIpswURLs(ipsws, device, version, build)
-			if len(filteredURLS) == 0 {
-				log.Errorf("no ipsws match %s", strings.Join([]string{device, version, build}, ", "))
-				return nil
-			}
-
-			if viper.GetBool("download.wiki.json") {
-				db := make(map[string]*info.Info)
-				if f, err := os.Open(viper.GetString("download.wiki.db")); err == nil { // try and load existing DB
-					log.Info("Found existsing iphonewiki DB, loading...")
-					defer f.Close()
-					if err := json.NewDecoder(f).Decode(&db); err != nil {
-						return fmt.Errorf("failed to decode JSON database: %v", err)
-					}
-					f.Close()
-				}
-				for idx, url := range filteredURLS {
-					log.Debugf("Parsing IPSW %s", url)
-					defer func() {
-						// try and write out DB JSON on exit if possible
-						dat, err := json.Marshal(db)
-						if err != nil {
-							log.Errorf("failed to marshal IPSW metadata: %v", err)
-						}
-						if err := os.WriteFile(viper.GetString("download.wiki.db"), dat, 0660); err != nil {
-							log.Errorf("failed to write IPSW metadata: %v", err)
-						}
-					}()
-					zr, err := download.NewRemoteZipReader(url, &download.RemoteConfig{
-						Proxy:    proxy,
-						Insecure: insecure,
-					})
-					if err != nil {
-						log.Errorf("failed to create remote zip reader of ipsw: %v", err)
-						db[url] = &info.Info{
-							Plists: &plist.Plists{
-								Type: "Dead IPSW",
-							},
-						}
-						continue
-					}
-					i, err := info.ParseZipFiles(zr.File)
-					if err != nil {
-						log.Errorf("failed parsing remote IPSW URL: %v", err)
-						continue
-					}
-					log.WithFields(log.Fields{
-						"devices": i.Plists.Restore.SupportedProductTypes,
-						"build":   i.Plists.BuildManifest.ProductBuildVersion,
-						"version": i.Plists.BuildManifest.ProductVersion,
-					}).Infof("Parsing (%d/%d) IPSW", idx+1, len(filteredURLS))
-					db[url] = i
-				}
-				dat, err := json.Marshal(db)
-				if err != nil {
-					return fmt.Errorf("failed to marshal IPSW metadata: %v", err)
-				}
-				if err := os.WriteFile(viper.GetString("download.wiki.db"), dat, 0660); err != nil {
-					return fmt.Errorf("failed to write IPSW metadata: %v", err)
-				}
-			} else {
-				log.Debug("URLs to download:")
-				for _, url := range filteredURLS {
-					utils.Indent(log.Debug, 2)(url)
+				log.Debug("URLs to Download:")
+				for _, o := range filteredOTAs {
+					utils.Indent(log.Debug, 2)(o.URL)
 				}
 
 				cont := true
 				if !confirm {
-					if len(filteredURLS) > 1 { // if filtered to a single device skip the prompt
+					// if filtered to a single device skip the prompt
+					if len(filteredOTAs) > 1 {
 						cont = false
 						prompt := &survey.Confirm{
-							Message: fmt.Sprintf("You are about to download %d ipsw files. Continue?", len(filteredURLS)),
+							Message: fmt.Sprintf("You are about to download %d OTA files. Continue?", len(filteredOTAs)),
 						}
 						survey.AskOne(prompt, &cont)
 					}
 				}
 
 				if cont {
-					if kernel { // REMOTE KERNEL MODE
-						for _, url := range filteredURLS {
-							d, v, b := download.ParseIpswURLString(url)
-							log.WithFields(log.Fields{"devices": d, "build": b, "version": v}).Info("Parsing remote IPSW")
-							log.Info("Extracting remote kernelcache")
-							zr, err := download.NewRemoteZipReader(url, &download.RemoteConfig{
+					if kernel || len(pattern) > 0 {
+						for _, o := range filteredOTAs {
+							log.WithFields(log.Fields{
+								"version": o.Version,
+								"build":   o.Build,
+								"devices": fmt.Sprintf("%s... (count=%d)", strings.Join(o.Devices[:3], " "), len(o.Devices)),
+								"model":   strings.Join(o.Devices, " "),
+							}).Info("Getting remote OTA")
+
+							zr, err := download.NewRemoteZipReader(o.URL, &download.RemoteConfig{
 								Proxy:    proxy,
 								Insecure: insecure,
 							})
 							if err != nil {
-								return fmt.Errorf("failed to create remote zip reader of ipsw: %v", err)
+								return fmt.Errorf("failed to open remote zip to OTA: %v", err)
 							}
-							if err := kernelcache.RemoteParse(zr, destPath); err != nil {
-								return fmt.Errorf("failed to download kernelcache from remote ipsw: %v", err)
-							}
-						}
-					} else if len(pattern) > 0 { // PATTERN MATCHING MODE
-						dlRE, err := regexp.Compile(pattern)
-						if err != nil {
-							return fmt.Errorf("failed to compile regex: %v", err)
-						}
-						for _, url := range filteredURLS {
-							d, v, b := download.ParseIpswURLString(url)
-							log.WithFields(log.Fields{"devices": d, "build": b, "version": v}).Info("Parsing remote IPSW")
-							log.Infof("Downloading files that contain: %s", pattern)
-							zr, err := download.NewRemoteZipReader(url, &download.RemoteConfig{
-								Proxy:    proxy,
-								Insecure: insecure,
-							})
+							inf, err := info.ParseZipFiles(zr.File)
 							if err != nil {
-								return fmt.Errorf("failed to create remote zip reader of ipsw: %v", err)
+								return fmt.Errorf("failed to parse remote IPSW metadata: %v", err)
 							}
-							iinfo, err := info.ParseZipFiles(zr.File)
+							folder, err := inf.GetFolder()
 							if err != nil {
-								return fmt.Errorf("failed to parse remote IPSW URL: %v", err)
-							}
-							folder, err := iinfo.GetFolder()
-							if err != nil {
-								log.Errorf("failed to get folder from remote ipsw: %v", err)
+								log.Errorf("failed to get folder from remote zip metadata: %v", err)
 							}
 							destPath = filepath.Join(destPath, folder)
-							if err := utils.RemoteUnzip(zr.File, dlRE, destPath, flat); err != nil {
-								return fmt.Errorf("failed to download pattern matching files from remote IPSW: %v", err)
+
+							if kernel { // REMOTE KERNEL MODE
+								log.Info("Extracting remote kernelcache")
+								_, err = kernelcache.RemoteParse(zr, destPath)
+								if err != nil {
+									return fmt.Errorf("failed to download kernelcache from remote ota: %v", err)
+								}
+							}
+							// PATTERN MATCHING MODE
+							if len(pattern) > 0 {
+								re, err := regexp.Compile(pattern)
+								if err != nil {
+									return fmt.Errorf("failed to compile regex for pattern '%s': %v", pattern, err)
+								}
+								log.Infof("Downloading files matching pattern %#v", pattern)
+								if _, err := utils.SearchZip(zr.File, re, destPath, flat, true); err != nil {
+									utils.Indent(log.Warn, 2)("0 files matched pattern in remote OTA zip. Now checking payloadv2 payloads...")
+									rfiles, err := ota.RemoteList(zr)
+									if err != nil {
+										return fmt.Errorf("failed to list remote OTA files: %v", err)
+									}
+									var matches []string
+									for _, rf := range rfiles {
+										if re.MatchString(rf.Name()) {
+											matches = append(matches, rf.Name())
+										}
+									}
+									if len(matches) == 0 {
+										return fmt.Errorf("no files matched pattern %#v in remote OTA zip", pattern)
+									}
+									err = ota.RemoteExtract(zr, pattern, destPath, func(path string) bool {
+										for i, v := range matches {
+											if strings.HasSuffix(v, filepath.Base(path)) {
+												matches = append(matches[:i], matches[i+1:]...)
+											}
+										}
+										return len(matches) == 0 // stop if we've extracted all matches
+									})
+									if err != nil {
+										return fmt.Errorf("failed to download dyld_shared_cache from remote ota: %v", err)
+									}
+								}
 							}
 						}
 					} else { // NORMAL MODE
 						downloader := download.NewDownload(proxy, insecure, skipAll, resumeAll, restartAll, false, viper.GetBool("verbose"))
-						for idx, url := range filteredURLS {
-							fname := filepath.Join(destPath, getDestName(url, removeCommas))
-							if _, err := os.Stat(fname); os.IsNotExist(err) {
-								d, v, b := download.ParseIpswURLString(url)
-								log.WithFields(log.Fields{"devices": d, "build": b, "version": v}).Infof("Getting (%d/%d) IPSW", idx+1, len(filteredURLS))
+						for _, o := range filteredOTAs {
+							folder := filepath.Join(destPath, fmt.Sprintf("%s%s_OTAs", o.Version, o.VersionExtra))
+							os.MkdirAll(folder, 0750)
+							var devices string
+							if len(o.Devices) > 0 {
+								sort.Strings(o.Devices)
+								if len(o.Devices) > 5 {
+									devices = fmt.Sprintf("%s_and_%d_others", o.Devices[0], len(o.Devices)-1)
+								} else {
+									devices = strings.Join(o.Devices, "_")
+								}
+							}
+							url := o.URL
+							destName := filepath.Join(folder, fmt.Sprintf("%s_%s", devices, getDestName(url, removeCommas)))
+							if _, err := os.Stat(destName); os.IsNotExist(err) {
+								log.WithFields(log.Fields{
+									"device": strings.Join(o.Devices, " "),
+									"model":  o.BoardID,
+									"build":  o.Build,
+								}).Info(fmt.Sprintf("Getting %s%s OTA", o.Version, o.VersionExtra))
 								// download file
 								downloader.URL = url
-								downloader.DestName = fname
-
-								err = downloader.Do()
-								if err != nil {
-									return fmt.Errorf("failed to download IPSW: %v", err)
+								downloader.DestName = destName
+								if err := downloader.Do(); err != nil {
+									return fmt.Errorf("failed to download file: %v", err)
 								}
+							} else if err != nil {
+								return fmt.Errorf("failed to stat file %s: %v", destName, err)
 							} else {
-								log.Warnf("ipsw already exists: %s", fname)
+								log.Warnf("OTA already exists: %s", destName)
 							}
 						}
 					}

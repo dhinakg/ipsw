@@ -1,5 +1,5 @@
 /*
-Copyright © 2018-2022 blacktop
+Copyright © 2018-2023 blacktop
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -47,9 +47,10 @@ func init() {
 
 // symbolicateCmd represents the symbolicate command
 var symbolicateCmd = &cobra.Command{
-	Use:   "symbolicate <crashlog> <dyld_shared_cache>",
-	Short: "Symbolicate ARM 64-bit crash logs (similar to Apple's symbolicatecrash)",
-	Args:  cobra.MinimumNArgs(1),
+	Use:     "symbolicate <crashlog> <dyld_shared_cache>",
+	Aliases: []string{"sym"},
+	Short:   "Symbolicate ARM 64-bit crash logs (similar to Apple's symbolicatecrash)",
+	Args:    cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 
 		if Verbose {

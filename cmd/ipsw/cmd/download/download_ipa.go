@@ -1,7 +1,7 @@
 //go:build !ios
 
 /*
-Copyright © 2018-2022 blacktop
+Copyright © 2018-2023 blacktop
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -68,6 +68,7 @@ func init() {
 // ipaCmd represents the dev command
 var ipaCmd = &cobra.Command{
 	Use:           "ipa",
+	Aliases:       []string{"app"},
 	Short:         "Download App Packages from the iOS App Store",
 	Args:          cobra.ExactArgs(1),
 	SilenceUsage:  false,

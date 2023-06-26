@@ -5,9 +5,6 @@ hide_title: true
 hide_table_of_contents: true
 sidebar_label: crash
 description: Crashlog commands
-last_update:
-  date: 2023-01-10T12:52:46-07:00
-  author: blacktop
 ---
 ## ipsw idev crash
 
@@ -27,7 +24,7 @@ ipsw idev crash [flags]
 
 ```
       --color           colorize output
-      --config string   config file (default is $HOME/.ipsw/config.yaml)
+      --config string   config file (default is $HOME/.config/ipsw/config.yaml)
   -u, --udid string     Device UniqueDeviceID to connect to
   -V, --verbose         verbose output
 ```
@@ -37,5 +34,5 @@ ipsw idev crash [flags]
 * [ipsw idev](/docs/cli/ipsw/idev)	 - USB connected device commands
 * [ipsw idev crash clear](/docs/cli/ipsw/idev/crash/clear)	 - Delete all crashlogs
 * [ipsw idev crash ls](/docs/cli/ipsw/idev/crash/ls)	 - List crashlogs
-* [ipsw idev crash pull](/docs/cli/ipsw/idev/crash/pull)	 - Pull all crashlogs
+* [ipsw idev crash pull](/docs/cli/ipsw/idev/crash/pull)	 - Pull crashlogs
 

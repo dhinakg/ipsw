@@ -5,9 +5,6 @@ hide_title: true
 hide_table_of_contents: true
 sidebar_label: ipsw
 description: Download and Parse IPSWs (and SO much more)
-last_update:
-  date: 2023-01-10T12:52:46-07:00
-  author: blacktop
 ---
 ## ipsw
 
@@ -17,14 +14,16 @@ Download and Parse IPSWs (and SO much more)
 
 ```
       --color           colorize output
-      --config string   config file (default is $HOME/.ipsw/config.yaml)
+      --config string   config file (default is $HOME/.config/ipsw/config.yaml)
   -h, --help            help for ipsw
   -V, --verbose         verbose output
 ```
 
 ### SEE ALSO
 
+* [ipsw debugserver](/docs/cli/ipsw/debugserver)	 - Prep device for remote debugging
 * [ipsw device-list](/docs/cli/ipsw/device-list)	 - List all iOS devices
+* [ipsw diff](/docs/cli/ipsw/diff)	 - Diff IPSWs
 * [ipsw download](/docs/cli/ipsw/download)	 - Download Apple Firmware files (and more)
 * [ipsw dtree](/docs/cli/ipsw/dtree)	 - Parse DeviceTree
 * [ipsw dyld](/docs/cli/ipsw/dyld)	 - Parse dyld_shared_cache
@@ -39,9 +38,11 @@ Download and Parse IPSWs (and SO much more)
 * [ipsw mdevs](/docs/cli/ipsw/mdevs)	 - List all MobileDevices in IPSW
 * [ipsw mount](/docs/cli/ipsw/mount)	 - Mount DMG from IPSW
 * [ipsw ota](/docs/cli/ipsw/ota)	 - Parse OTAs
+* [ipsw pongo](/docs/cli/ipsw/pongo)	 - PongoOS Terminal
 * [ipsw sepfw](/docs/cli/ipsw/sepfw)	 - Dump MachOs
 * [ipsw shsh](/docs/cli/ipsw/shsh)	 - Get shsh blobs from device
 * [ipsw symbolicate](/docs/cli/ipsw/symbolicate)	 - Symbolicate ARM 64-bit crash logs (similar to Apple's symbolicatecrash)
 * [ipsw update](/docs/cli/ipsw/update)	 - Download an ipsw update if one exists
 * [ipsw version](/docs/cli/ipsw/version)	 - Print the version number of ipsw
+* [ipsw watch](/docs/cli/ipsw/watch)	 - Watch Github Commits
 

@@ -1,5 +1,5 @@
 /*
-Copyright © 2018-2022 blacktop
+Copyright © 2018-2023 blacktop
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -37,13 +37,10 @@ import (
 	"github.com/blacktop/ipsw/cmd/ipsw/cmd/macho"
 	"github.com/blacktop/ipsw/cmd/ipsw/cmd/ota"
 	"github.com/spf13/cobra"
-
-	// "github.com/spf13/cobra/doc"
 	"github.com/spf13/viper"
 )
 
 var (
-	ctx     *log.Entry
 	cfgFile string
 	// Verbose boolean flag for verbose logging
 	Verbose bool
@@ -80,11 +77,14 @@ func init() {
 	// will be global for your application.
 
 	// Flags
-	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.ipsw/config.yaml)")
+	rootCmd.PersistentFlags().StringVar(&cfgFile, "config", "", "config file (default is $HOME/.config/ipsw/config.yaml)")
 	rootCmd.PersistentFlags().BoolVarP(&Verbose, "verbose", "V", false, "verbose output")
 	rootCmd.PersistentFlags().BoolVar(&Color, "color", false, "colorize output")
+	rootCmd.PersistentFlags().String("diff-tool", "", "git diff tool (for --diff commands)")
+	rootCmd.PersistentFlags().MarkHidden("diff-tool")
 	viper.BindPFlag("verbose", rootCmd.Flags().Lookup("verbose"))
 	viper.BindPFlag("color", rootCmd.Flags().Lookup("color"))
+	viper.BindPFlag("diff-tool", rootCmd.Flags().Lookup("diff-tool"))
 	viper.BindEnv("color", "CLICOLOR")
 	// Add subcommand groups
 	rootCmd.AddCommand(download.DownloadCmd)
@@ -109,7 +109,7 @@ func initConfig() {
 		cobra.CheckErr(err)
 
 		// Search config in home directory with name ".ipsw" (without extension).
-		viper.AddConfigPath(filepath.Join(home, ".ipsw"))
+		viper.AddConfigPath(filepath.Join(home, ".config", "ipsw"))
 		viper.SetConfigType("yaml")
 		viper.SetConfigName("config")
 	}

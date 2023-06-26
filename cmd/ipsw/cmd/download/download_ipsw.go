@@ -1,5 +1,5 @@
 /*
-Copyright © 2018-2022 blacktop
+Copyright © 2018-2023 blacktop
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -25,16 +25,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/apex/log"
+	"github.com/blacktop/ipsw/internal/commands/extract"
 	"github.com/blacktop/ipsw/internal/download"
 	"github.com/blacktop/ipsw/internal/utils"
-	"github.com/blacktop/ipsw/pkg/dyld"
 	"github.com/blacktop/ipsw/pkg/info"
-	"github.com/blacktop/ipsw/pkg/kernelcache"
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -77,6 +75,7 @@ func init() {
 // ipswCmd represents the ipsw command
 var ipswCmd = &cobra.Command{
 	Use:           "ipsw",
+	Aliases:       []string{"i"},
 	Short:         "Download and parse IPSW(s) from the internets",
 	SilenceUsage:  true,
 	SilenceErrors: true,
@@ -160,15 +159,10 @@ var ipswCmd = &cobra.Command{
 			dFlg.Build = dev.BuildVersion
 		}
 
-		var destPath string
-		if len(output) > 0 {
-			destPath = filepath.Clean(output)
-		}
-
 		if len(device) > 0 {
 			db, err := info.GetIpswDB()
 			if err != nil {
-				return fmt.Errorf("failed to get ipsw device DB: %v", err)
+				return fmt.Errorf("failed to get IPSW device DB: %v", err)
 			}
 			if dev, err := db.LookupDevice(device); err == nil {
 				if dev.SDKPlatform == "macosx" {
@@ -315,7 +309,7 @@ var ipswCmd = &cobra.Command{
 			if len(ipsws) > 1 {
 				cont = false
 				prompt := &survey.Confirm{
-					Message: fmt.Sprintf("You are about to download %d ipsw files. Continue?", len(ipsws)),
+					Message: fmt.Sprintf("You are about to download %d IPSW files. Continue?", len(ipsws)),
 				}
 				survey.AskOne(prompt, &cont)
 			}
@@ -323,110 +317,59 @@ var ipswCmd = &cobra.Command{
 
 		if cont {
 			if remoteKernel || remoteDSC || len(remotePattern) > 0 {
-				if remoteKernel { // REMOTE KERNEL MODE
-					for _, i := range ipsws {
-						log.WithFields(log.Fields{
-							"device":  i.Identifier,
-							"build":   i.BuildID,
-							"version": i.Version,
-							"signed":  i.Signed,
-						}).Info("Parsing remote IPSW")
+				for _, ipsw := range ipsws {
+					log.WithFields(log.Fields{
+						"device":  ipsw.Identifier,
+						"build":   ipsw.BuildID,
+						"version": ipsw.Version,
+						"signed":  ipsw.Signed,
+					}).Info("Parsing remote IPSW")
 
+					config := &extract.Config{
+						IPSW:     "",
+						URL:      ipsw.URL,
+						Pattern:  remotePattern,
+						Arches:   dyldArches,
+						Proxy:    proxy,
+						Insecure: insecure,
+						DMGs:     false,
+						DmgType:  "",
+						Flatten:  flat,
+						Progress: true,
+						Output:   output,
+					}
+
+					// REMOTE KERNEL MODE
+					if remoteKernel {
 						log.Info("Extracting remote kernelcache")
-						zr, err := download.NewRemoteZipReader(i.URL, &download.RemoteConfig{
-							Proxy:    proxy,
-							Insecure: insecure,
-						})
-						if err != nil {
-							return fmt.Errorf("failed to create remote zip reader of ipsw: %v", err)
-						}
-						if err := kernelcache.RemoteParse(zr, destPath); err != nil {
-							return fmt.Errorf("failed to download kernelcache from remote ipsw: %v", err)
+						if _, err := extract.Kernelcache(config); err != nil {
+							return fmt.Errorf("failed to extract kernelcache from remote IPSW: %v", err)
 						}
 					}
-				}
-				if remoteDSC { // REMOTE DSC MODE
-					for _, i := range ipsws {
-						log.WithFields(log.Fields{
-							"device":  i.Identifier,
-							"build":   i.BuildID,
-							"version": i.Version,
-							"signed":  i.Signed,
-						}).Info("Parsing remote IPSW")
-
+					// REMOTE DSC MODE
+					if remoteDSC {
 						log.Info("Extracting remote dyld_shared_cache(s)")
-						zr, err := download.NewRemoteZipReader(i.URL, &download.RemoteConfig{
-							Proxy:    proxy,
-							Insecure: insecure,
-						})
-						if err != nil {
-							return fmt.Errorf("failed to create remote zip reader of ipsw: %v", err)
-						}
-						i, err := info.ParseZipFiles(zr.File)
-						if err != nil {
-							return fmt.Errorf("failed to parse remote IPSW metadata: %v", err)
-						}
-						sysDMG, err := i.GetSystemOsDmg()
-						if err != nil {
-							return fmt.Errorf("only iOS16.x/macOS13.x supported: failed to get SystemOS DMG from remote zip metadata: %v", err)
-						}
-						if len(sysDMG) == 0 {
-							return fmt.Errorf("only iOS16.x/macOS13.x supported: no SystemOS DMG found in remote zip metadata")
-						}
-						tmpDIR, err := os.MkdirTemp("", "ipsw_extract_remote_dyld")
-						if err != nil {
-							return fmt.Errorf("failed to create temporary directory to store SystemOS DMG: %v", err)
-						}
-						defer os.RemoveAll(tmpDIR)
-						if err := utils.RemoteUnzip(zr.File, regexp.MustCompile(fmt.Sprintf("^%s$", sysDMG)), tmpDIR, true); err != nil {
-							return fmt.Errorf("failed to extract SystemOS DMG from remote IPSW: %v", err)
-						}
-						folder, err := i.GetFolder()
-						if err != nil {
-							log.Errorf("failed to get folder from remote zip metadata: %v", err)
-						}
-						destPath = filepath.Join(destPath, folder)
-						if err := dyld.ExtractFromDMG(i, filepath.Join(tmpDIR, sysDMG), destPath, viper.GetStringSlice("extract.dyld-arch")); err != nil {
-							return fmt.Errorf("failed to extract dyld_shared_cache(s) from remote IPSW: %v", err)
+						if _, err := extract.DSC(config); err != nil {
+							return err
 						}
 					}
-				}
-				if len(remotePattern) > 0 { // PATTERN MATCHING MODE
-					for _, i := range ipsws {
-						log.WithFields(log.Fields{
-							"device":  i.Identifier,
-							"build":   i.BuildID,
-							"version": i.Version,
-							"signed":  i.Signed,
-						}).Info("Parsing remote IPSW")
-						dlRE, err := regexp.Compile(remotePattern)
-						if err != nil {
-							return errors.Wrap(err, "failed to compile regexp")
-						}
+					// PATTERN MATCHING MODE
+					if len(remotePattern) > 0 {
 						log.Infof("Downloading files matching pattern %#v", remotePattern)
-						zr, err := download.NewRemoteZipReader(i.URL, &download.RemoteConfig{
-							Proxy:    proxy,
-							Insecure: insecure,
-						})
-						if err != nil {
-							return fmt.Errorf("failed to create remote zip reader of ipsw: %v", err)
-						}
-						iinfo, err := info.ParseZipFiles(zr.File)
-						if err != nil {
-							return errors.Wrap(err, "failed to parse remote ipsw")
-						}
-						folder, err := iinfo.GetFolder()
-						if err != nil {
-							log.Errorf("failed to get folder from remote ipsw metadata: %v", err)
-						}
-						if err := utils.RemoteUnzip(zr.File, dlRE, filepath.Join(destPath, folder), flat); err != nil {
-							return fmt.Errorf("failed to download pattern matching files from remote ipsw: %v", err)
+						if _, err := extract.Search(config); err != nil {
+							return err
 						}
 					}
 				}
 			} else { // NORMAL MODE
 				for _, i := range ipsws {
 					destName := getDestName(i.URL, removeCommas)
+					if len(output) > 0 {
+						destName = filepath.Join(filepath.Clean(output), destName)
+					}
+					if err := os.MkdirAll(filepath.Dir(destName), 0755); err != nil {
+						return fmt.Errorf("failed to create directory: %v", err)
+					}
 					if _, err := os.Stat(destName); os.IsNotExist(err) {
 						log.WithFields(log.Fields{
 							"device":  i.Identifier,
@@ -440,10 +383,11 @@ var ipswCmd = &cobra.Command{
 						downloader.Sha1 = i.SHA1
 						downloader.DestName = destName
 
-						err = downloader.Do()
-						if err != nil {
+						if err := downloader.Do(); err != nil {
 							return fmt.Errorf("failed to download file: %v", err)
 						}
+
+						log.Info("Created: " + destName)
 
 						// append sha1 and filename to checksums file
 						f, err := os.OpenFile("checksums.txt.sha1", os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
@@ -456,7 +400,7 @@ var ipswCmd = &cobra.Command{
 							return fmt.Errorf("failed to write to checksums.txt.sha1: %v", err)
 						}
 					} else {
-						log.Warnf("ipsw already exists: %s", destName)
+						log.Warnf("IPSW already exists: %s", destName)
 					}
 				}
 			}

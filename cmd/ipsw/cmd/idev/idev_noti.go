@@ -1,5 +1,5 @@
 /*
-Copyright © 2022 blacktop
+Copyright © 2018-2023 blacktop
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -23,6 +23,7 @@ package idev
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/apex/log"
@@ -89,7 +90,11 @@ var NotificationCmd = &cobra.Command{
 			}
 			return nil
 		}); err != nil {
-			log.Warn("Exiting...")
+			if errors.As(err, &ctrlc.ErrorCtrlC{}) {
+				log.Warn("Exiting...")
+			} else {
+				return err
+			}
 		}
 
 		return nil

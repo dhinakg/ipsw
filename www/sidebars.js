@@ -39,6 +39,7 @@ const sidebars = {
       },
       items: [
         "guides/download",
+        "guides/info",
         "guides/extract",
         "guides/macho",
         "guides/kernel",
@@ -53,6 +54,9 @@ const sidebars = {
         "guides/symbolicate",
         "guides/device_list",
         "guides/shsh",
+        "guides/debugserver",
+        "guides/pongo",
+        "guides/ida_pro",
         // {
         //   type: "category",
         //   label: "Docs",

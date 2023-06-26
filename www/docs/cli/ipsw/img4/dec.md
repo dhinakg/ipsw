@@ -5,9 +5,6 @@ hide_title: true
 hide_table_of_contents: true
 sidebar_label: dec
 description: Decrypt img4 payloads
-last_update:
-  date: 2023-01-10T12:52:46-07:00
-  author: blacktop
 ---
 ## ipsw img4 dec
 
@@ -21,7 +18,9 @@ ipsw img4 dec <img4> [flags]
 
 ```
   -h, --help            help for dec
-  -k, --iv-key string   AES key
+  -i, --iv string       AES iv
+      --iv-key string   AES iv+key
+  -k, --key string      AES key
   -o, --output string   Output file
 ```
 
@@ -29,7 +28,7 @@ ipsw img4 dec <img4> [flags]
 
 ```
       --color           colorize output
-      --config string   config file (default is $HOME/.ipsw/config.yaml)
+      --config string   config file (default is $HOME/.config/ipsw/config.yaml)
   -V, --verbose         verbose output
 ```
 

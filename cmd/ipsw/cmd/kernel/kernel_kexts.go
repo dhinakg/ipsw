@@ -1,5 +1,5 @@
 /*
-Copyright © 2018-2022 blacktop
+Copyright © 2018-2023 blacktop
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -71,7 +71,10 @@ var kextsCmd = &cobra.Command{
 				return err
 			}
 
-			out, err := utils.GitDiff(strings.Join(kout1, "\n"), strings.Join(kout2, "\n"))
+			out, err := utils.GitDiff(
+				strings.Join(kout1, "\n"),
+				strings.Join(kout2, "\n"),
+				&utils.GitDiffConfig{Color: viper.GetBool("color"), Tool: viper.GetString("diff-tool")})
 			if err != nil {
 				return err
 			}

@@ -1,5 +1,5 @@
 /*
-Copyright © 2018-2022 blacktop
+Copyright © 2018-2023 blacktop
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -223,7 +223,10 @@ var ctfdumpCmd = &cobra.Command{
 				return fmt.Errorf("could not find struct '%s' in either file", args[2])
 			}
 
-			out, err := utils.GitDiff(t1.String(), t2.String())
+			out, err := utils.GitDiff(
+				t1.String(),
+				t2.String(),
+				&utils.GitDiffConfig{Color: viper.GetBool("color"), Tool: viper.GetString("diff-tool")})
 			if err != nil {
 				return err
 			}
@@ -262,7 +265,7 @@ var ctfdumpCmd = &cobra.Command{
 				}
 
 				cwd, _ := os.Getwd()
-				fileName := fmt.Sprintf("ctfdump-%s.json", kver.Kernel.XNU)
+				fileName := fmt.Sprintf("ctfdump-%s.json", kver.KernelVersion.XNU)
 				log.Infof("Creating %s", filepath.Join(cwd, fileName))
 				if err := os.WriteFile(fileName, b, 0660); err != nil {
 					return err

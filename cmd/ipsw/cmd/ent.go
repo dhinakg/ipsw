@@ -1,5 +1,5 @@
 /*
-Copyright © 2018-2022 blacktop
+Copyright © 2018-2023 blacktop
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -22,188 +22,38 @@ THE SOFTWARE.
 package cmd
 
 import (
-	"archive/zip"
 	"bytes"
-	"compress/gzip"
-	"encoding/gob"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"text/tabwriter"
 
 	"github.com/alecthomas/chroma/quick"
 	"github.com/apex/log"
-	"github.com/blacktop/go-macho"
 	"github.com/blacktop/go-plist"
+	"github.com/blacktop/ipsw/internal/commands/ent"
 	"github.com/blacktop/ipsw/internal/utils"
-	"github.com/blacktop/ipsw/pkg/info"
 	"github.com/fatih/color"
 	"github.com/sergi/go-diff/diffmatchpatch"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 )
 
-var haveChecked []string
-
-type Entitlements map[string]any
-
-func scanEnts(ipswPath, dmgPath, dmgType string) (map[string]string, error) {
-	if utils.StrSliceHas(haveChecked, dmgPath) {
-		return nil, nil // already checked
-	}
-
-	dmgs, err := utils.Unzip(ipswPath, "", func(f *zip.File) bool {
-		return strings.EqualFold(filepath.Base(f.Name), dmgPath)
-	})
-	if err != nil {
-		return nil, fmt.Errorf("failed to extract %s from IPSW: %v", dmgPath, err)
-	}
-	if len(dmgs) == 0 {
-		return nil, fmt.Errorf("failed to find %s in IPSW", dmgPath)
-	}
-	defer os.Remove(dmgs[0])
-
-	utils.Indent(log.Info, 3)(fmt.Sprintf("Mounting %s %s", dmgType, dmgs[0]))
-	mountPoint, err := utils.MountFS(dmgs[0])
-	if err != nil {
-		return nil, fmt.Errorf("failed to mount DMG: %v", err)
-	}
-	defer func() {
-		utils.Indent(log.Info, 3)(fmt.Sprintf("Unmounting %s", dmgs[0]))
-		if err := utils.Unmount(mountPoint, true); err != nil {
-			log.Errorf("failed to unmount DMG at %s: %v", dmgs[0], err)
-		}
-	}()
-
-	var files []string
-	if err := filepath.Walk(mountPoint, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			log.Errorf("failed to walk mount %s: %v", mountPoint, err)
-			return nil
-		}
-		if !info.IsDir() {
-			files = append(files, path)
-		}
-		return nil
-	}); err != nil {
-		return nil, fmt.Errorf("failed to walk files in dir %s: %v", mountPoint, err)
-	}
-
-	entDB := make(map[string]string)
-
-	for _, file := range files {
-		if m, err := macho.Open(file); err == nil {
-			if m.CodeSignature() != nil && len(m.CodeSignature().Entitlements) > 0 {
-				entDB[strings.TrimPrefix(file, mountPoint)] = m.CodeSignature().Entitlements
-			} else {
-				entDB[strings.TrimPrefix(file, mountPoint)] = ""
-			}
-		}
-	}
-
-	haveChecked = append(haveChecked, dmgPath)
-
-	return entDB, nil
-}
-
-func getEntitlementDatabase(ipswPath, entDBPath string) (map[string]string, error) {
-	entDB := make(map[string]string)
-
-	i, err := info.Parse(ipswPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to parse IPSW: %v", err)
-	}
-
-	// create or load entitlement database
-	if _, err := os.Stat(entDBPath); os.IsNotExist(err) {
-		log.Info("Generating entitlement database file...")
-
-		if appOS, err := i.GetAppOsDmg(); err == nil {
-			if ents, err := scanEnts(ipswPath, appOS, "AppOS"); err != nil {
-				return nil, fmt.Errorf("failed to scan files in AppOS %s: %v", appOS, err)
-			} else {
-				for k, v := range ents {
-					entDB[k] = v
-				}
-			}
-		}
-		if systemOS, err := i.GetSystemOsDmg(); err == nil {
-			if ents, err := scanEnts(ipswPath, systemOS, "SystemOS"); err != nil {
-				return nil, fmt.Errorf("failed to scan files in SystemOS %s: %v", systemOS, err)
-			} else {
-				for k, v := range ents {
-					entDB[k] = v
-				}
-			}
-		}
-		if fsOS, err := i.GetFileSystemOsDmg(); err == nil {
-			if ents, err := scanEnts(ipswPath, fsOS, "filesystem"); err != nil {
-				return nil, fmt.Errorf("failed to scan files in filesystem %s: %v", fsOS, err)
-			} else {
-				for k, v := range ents {
-					entDB[k] = v
-				}
-			}
-		}
-
-		buff := new(bytes.Buffer)
-
-		e := gob.NewEncoder(buff)
-
-		// Encoding the map
-		err := e.Encode(entDB)
-		if err != nil {
-			return nil, fmt.Errorf("failed to encode entitlement db to binary: %v", err)
-		}
-
-		of, err := os.Create(entDBPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create file %s: %v", ipswPath+".entDB", err)
-		}
-		defer of.Close()
-
-		gzw := gzip.NewWriter(of)
-		defer gzw.Close()
-
-		if _, err := buff.WriteTo(gzw); err != nil {
-			return nil, fmt.Errorf("failed to write entitlement db to gzip file: %v", err)
-		}
-	} else {
-		log.Info("Found ipsw entitlement database file...")
-
-		edbFile, err := os.Open(entDBPath)
-		if err != nil {
-			return nil, fmt.Errorf("failed to open entitlement database file %s; %v", entDBPath, err)
-		}
-		defer edbFile.Close()
-
-		gzr, err := gzip.NewReader(edbFile)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create gzip reader: %v", err)
-		}
-		defer gzr.Close()
-
-		// Decoding the serialized data
-		if err := gob.NewDecoder(gzr).Decode(&entDB); err != nil {
-			return nil, fmt.Errorf("failed to decode entitlement database; %v", err)
-		}
-	}
-
-	return entDB, nil
-}
-
 func init() {
 	rootCmd.AddCommand(entCmd)
 
 	entCmd.Flags().StringP("ent", "e", "", "Entitlement to search for")
 	entCmd.Flags().StringP("file", "f", "", "Dump entitlements for MachO")
-	entCmd.Flags().String("output", "o", "Folder to r/w entitlement databases")
+	entCmd.Flags().StringP("output", "o", "", "Folder to r/w entitlement databases")
 	entCmd.Flags().BoolP("diff", "d", false, "Diff entitlements")
+	entCmd.Flags().BoolP("md", "m", false, "Markdown style output")
 	viper.BindPFlag("ent.ent", entCmd.Flags().Lookup("ent"))
 	viper.BindPFlag("ent.file", entCmd.Flags().Lookup("file"))
-	viper.BindPFlag("ent.ouput", entCmd.Flags().Lookup("ouput"))
+	viper.BindPFlag("ent.output", entCmd.Flags().Lookup("output"))
 	viper.BindPFlag("ent.diff", entCmd.Flags().Lookup("diff"))
+	viper.BindPFlag("ent.md", entCmd.Flags().Lookup("md"))
 }
 
 // entCmd represents the ent command
@@ -217,9 +67,11 @@ var entCmd = &cobra.Command{
 		if Verbose {
 			log.SetLevel(log.DebugLevel)
 		}
+		color.NoColor = !viper.GetBool("color")
 
 		entitlement := viper.GetString("ent.ent")
 		searchFile := viper.GetString("ent.file")
+		markdown := viper.GetBool("ent.md")
 
 		if len(entitlement) > 0 && len(searchFile) > 0 {
 			log.Errorf("you can only use --ent OR --file (not both)")
@@ -236,7 +88,7 @@ var entCmd = &cobra.Command{
 			entDBPath = filepath.Join(viper.GetString("ent.output"), filepath.Base(entDBPath))
 		}
 
-		entDB, err := getEntitlementDatabase(ipswPath, entDBPath)
+		entDB, err := ent.GetDatabase(ipswPath, entDBPath)
 		if err != nil {
 			return fmt.Errorf("failed to get entitlement database: %v", err)
 		}
@@ -253,7 +105,7 @@ var entCmd = &cobra.Command{
 				entDBPath2 = filepath.Join(viper.GetString("ent.output"), filepath.Base(entDBPath2))
 			}
 
-			entDB2, err := getEntitlementDatabase(ipswPath2, entDBPath2)
+			entDB2, err := ent.GetDatabase(ipswPath2, entDBPath2)
 			if err != nil {
 				return fmt.Errorf("failed to get entitlement database: %v", err)
 			}
@@ -287,28 +139,69 @@ var entCmd = &cobra.Command{
 						}
 					}
 				}
-			} else {
+			} else { // TODO: refactor this to use ent.DiffDatabases
+				// sort latest entitlements DB's files
+				var files []string
+				for f := range entDB2 {
+					files = append(files, f)
+				}
+				sort.Strings(files)
+
 				found := false
-				for f2, e2 := range entDB2 { // DIFF ALL ENTITLEMENTS
+				for _, f2 := range files { // DIFF ALL ENTITLEMENTS
+					e2 := entDB2[f2]
 					if e1, ok := entDB[f2]; ok {
-						out, err := utils.GitDiff(e1, e2)
-						if err != nil {
-							return err
+						var out string
+						if markdown {
+							out, err = utils.GitDiff(e1+"\n", e2+"\n", &utils.GitDiffConfig{Color: false, Tool: "git"})
+							if err != nil {
+								return err
+							}
+						} else {
+							out, err = utils.GitDiff(e1+"\n", e2+"\n", &utils.GitDiffConfig{Color: viper.GetBool("color"), Tool: viper.GetString("diff-tool")})
+							if err != nil {
+								return err
+							}
 						}
 						if len(out) == 0 {
 							continue
 						}
 						found = true
-						color.New(color.Bold).Printf("\n%s\n\n", f2)
-						fmt.Println(out)
+						if markdown {
+							color.New(color.Bold).Printf("\n### `%s`\n\n", f2)
+							fmt.Println("```diff")
+							fmt.Println(out)
+							fmt.Println("```")
+						} else {
+							color.New(color.Bold).Printf("\n%s\n\n", f2)
+							fmt.Println(out)
+						}
 					} else {
 						found = true
-						color.New(color.Bold).Printf("\n🆕 %s 🆕\n\n", f2)
-						if len(e2) == 0 {
-							log.Warn("No entitlements (yet)")
+						if markdown {
+							color.New(color.Bold).Printf("\n### 🆕 `%s`\n\n", f2)
 						} else {
-							if err := quick.Highlight(os.Stdout, e2, "xml", "terminal16m", "nord"); err != nil {
-								return err
+							color.New(color.Bold).Printf("\n🆕 %s 🆕\n\n", f2)
+						}
+						if len(e2) == 0 {
+							if markdown {
+								fmt.Println("- No entitlements *(yet)*")
+							} else {
+								log.Warn("No entitlements (yet)")
+							}
+						} else {
+							if viper.GetBool("color") {
+								if err := quick.Highlight(os.Stdout, e2, "xml", "terminal256", "nord"); err != nil {
+									return err
+								}
+							} else {
+								if markdown {
+									fmt.Println("```xml")
+									fmt.Println(e2)
+									fmt.Println("```")
+								} else {
+									fmt.Println(e2)
+								}
 							}
 						}
 					}
@@ -335,7 +228,7 @@ var entCmd = &cobra.Command{
 			w := tabwriter.NewWriter(os.Stdout, 0, 0, 1, ' ', 0)
 			for f, ent := range entDB {
 				if strings.Contains(ent, entitlement) {
-					ents := Entitlements{}
+					ents := make(map[string]any)
 					if err := plist.NewDecoder(bytes.NewReader([]byte(ent))).Decode(&ents); err != nil {
 						return fmt.Errorf("failed to decode entitlements plist for %s: %v", f, err)
 					}

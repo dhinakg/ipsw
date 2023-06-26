@@ -1,5 +1,5 @@
 /*
-Copyright © 2022 blacktop
+Copyright © 2018-2023 blacktop
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -68,6 +68,7 @@ func init() {
 // gitCmd represents the git command
 var gitCmd = &cobra.Command{
 	Use:           "git",
+	Aliases:       []string{"g", "github"},
 	Short:         "Download github.com/orgs/apple-oss-distributions tarballs",
 	SilenceUsage:  false,
 	SilenceErrors: false,

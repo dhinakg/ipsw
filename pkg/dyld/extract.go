@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -21,72 +22,82 @@ import (
 	"github.com/vbauerster/mpb/v7/decor"
 )
 
-type extractConfig struct {
-	CacheFolder string
-	CacheRegex  string
-	MountPoint  string
-	Prefix      string
-	Glob        string
-	IsMacOS     bool
+func GetDscPathsInMount(mountPoint string, driverKit bool) ([]string, error) {
+	var matches []string
+	var re *regexp.Regexp
+
+	if runtime.GOOS == "linux" { // apfs-fuse mounts volume at mountPoint + "/root"
+		mountPoint = filepath.Join(mountPoint, "root")
+	}
+
+	if driverKit {
+		re = regexp.MustCompile(filepath.Join(mountPoint, DriverKitCacheRegex))
+	} else {
+		re = regexp.MustCompile(filepath.Join(mountPoint, CacheRegex))
+	}
+
+	if err := filepath.Walk(mountPoint, func(path string, info fs.FileInfo, err error) error {
+		if err != nil {
+			utils.Indent(log.Warn, 3)(fmt.Sprintf("failed to walk %s: %v", path, err))
+			return nil
+		}
+		if info.IsDir() {
+			return nil
+		}
+		if re.MatchString(path) {
+			matches = append(matches, path)
+		}
+		return nil
+	}); err != nil {
+		return nil, err // FIXME: this will never error
+	}
+
+	return matches, nil
 }
 
-func ExtractFromDMG(i *info.Info, dmgPath, destPath string, arches []string) error {
-	var err error
-
-	var config extractConfig
-	if utils.StrSliceContains(i.Plists.BuildManifest.SupportedProductTypes, "mac") {
-		config.CacheFolder = MacOSCacheFolder
-		config.CacheRegex = MacOSCacheRegex
-		config.IsMacOS = true
-	} else {
-		config.CacheFolder = IPhoneCacheFolder
-		config.CacheRegex = IPhoneCacheRegex
-	}
+func ExtractFromDMG(i *info.Info, dmgPath, destPath string, arches []string, driverkit bool) ([]string, error) {
 
 	utils.Indent(log.Info, 2)(fmt.Sprintf("Mounting DMG %s", dmgPath))
-	config.MountPoint, err = utils.MountFS(dmgPath)
+	var alreadyMounted bool
+	mountPoint, alreadyMounted, err := utils.MountDMG(dmgPath)
 	if err != nil {
-		return fmt.Errorf("failed to IPSW FS dmg: %v", err)
+		return nil, fmt.Errorf("failed to IPSW FS dmg: %v", err)
 	}
-	defer func() {
-		utils.Indent(log.Info, 2)(fmt.Sprintf("Unmounting DMG %s", dmgPath))
-		if err := utils.Unmount(config.MountPoint, false); err != nil {
-			log.Errorf("failed to unmount File System DMG mount at %s: %v", dmgPath, err)
-		}
-	}()
+	if alreadyMounted {
+		utils.Indent(log.Debug, 3)(fmt.Sprintf("%s already mounted", dmgPath))
+	} else {
+		defer func() {
+			utils.Indent(log.Debug, 2)(fmt.Sprintf("Unmounting %s", dmgPath))
+			if err := utils.Retry(3, 2*time.Second, func() error {
+				return utils.Unmount(mountPoint, false)
+			}); err != nil {
+				log.Errorf("failed to unmount DMG %s at %s: %v", dmgPath, mountPoint, err)
+			}
+		}()
+	}
 
 	if runtime.GOOS == "darwin" {
 		if err := os.MkdirAll(destPath, 0750); err != nil {
-			return fmt.Errorf("failed to create destination directory %s: %v", destPath, err)
+			return nil, fmt.Errorf("failed to create destination directory %s: %v", destPath, err)
 		}
-		config.Prefix = filepath.Join(config.MountPoint, config.CacheFolder) + "/"
-		config.Glob = config.CacheFolder + "dyld_shared_cache_*"
 	} else {
 		if _, ok := os.LookupEnv("IPSW_IN_DOCKER"); ok {
 			if err := os.MkdirAll(filepath.Join("/data", destPath), 0750); err != nil {
-				return fmt.Errorf("failed to create destination directory %s: %v", destPath, err)
+				return nil, fmt.Errorf("failed to create destination directory %s: %v", destPath, err)
 			}
 		} else {
-			// Create temporary mount point
 			if err := os.MkdirAll(destPath, 0750); err != nil {
-				return fmt.Errorf("failed to create destination directory %s: %v", destPath, err)
-			}
-			if err := os.MkdirAll(config.MountPoint, 0750); err != nil {
-				return fmt.Errorf("failed to create temporary mount point %s: %v", config.MountPoint, err)
-			} else {
-				defer os.RemoveAll(config.MountPoint)
+				return nil, fmt.Errorf("failed to create destination directory %s: %v", destPath, err)
 			}
 		}
-		config.Prefix = filepath.Join(config.MountPoint, config.CacheFolder) + "/"
-		config.Glob = "root/" + config.CacheFolder + "dyld_shared_cache_*"
 	}
 
-	matches, err := filepath.Glob(filepath.Join(config.MountPoint, config.Glob))
+	matches, err := GetDscPathsInMount(mountPoint, driverkit)
 	if err != nil {
-		return fmt.Errorf("failed to glob %s: %v", config.Glob, err)
+		return nil, err
 	}
 
-	if config.IsMacOS {
+	if utils.StrSliceContains(i.Plists.BuildManifest.SupportedProductTypes, "mac") { // Is macOS IPSW
 		if len(arches) == 0 {
 			selMatches := []string{}
 			prompt := &survey.MultiSelect{
@@ -97,14 +108,14 @@ func ExtractFromDMG(i *info.Info, dmgPath, destPath string, arches []string) err
 			if err := survey.AskOne(prompt, &selMatches); err != nil {
 				if err == terminal.InterruptErr {
 					log.Warn("Exiting...")
-					return nil
+					return nil, nil
 				}
-				return err
+				return nil, err
 			}
 			matches = selMatches
 		} else {
 			var filtered []string
-			r := regexp.MustCompile(fmt.Sprintf("%s(%s)%s", config.CacheRegex, strings.Join(arches, "|"), CacheRegexEnding))
+			r := regexp.MustCompile(fmt.Sprintf("%s(%s)%s", CacheRegex, strings.Join(arches, "|"), CacheRegexEnding))
 			for _, match := range matches {
 				if r.MatchString(match) {
 					filtered = append(filtered, match)
@@ -112,61 +123,67 @@ func ExtractFromDMG(i *info.Info, dmgPath, destPath string, arches []string) err
 			}
 
 			if len(filtered) == 0 {
-				return fmt.Errorf("no dyld_shared_cache files found matching the specified archs: %v", arches)
+				return nil, fmt.Errorf("no dyld_shared_cache files found matching the specified archs: %v", arches)
 			}
 			matches = filtered
 		}
 	}
 
 	if len(matches) == 0 {
-		return fmt.Errorf("failed to find dyld_shared_cache(s) in DMG: %s", dmgPath)
+		return nil, fmt.Errorf("failed to find dyld_shared_cache(s) in DMG: %s", dmgPath)
 	}
 
+	var artifacts []string
 	for _, match := range matches {
 		dyldDest := filepath.Join(destPath, filepath.Base(match))
 		utils.Indent(log.Info, 3)(fmt.Sprintf("Extracting %s to %s", filepath.Base(match), dyldDest))
 		if err := utils.Copy(match, dyldDest); err != nil {
-			return fmt.Errorf("failed to copy %s to %s: %v", match, dyldDest, err)
+			return nil, fmt.Errorf("failed to copy %s to %s: %v", match, dyldDest, err)
 		}
+		artifacts = append(artifacts, dyldDest)
 	}
 
-	return nil
+	return artifacts, nil
 }
 
 // Extract extracts dyld_shared_cache from IPSW
-func Extract(ipsw, destPath string, arches []string) error {
+func Extract(ipsw, destPath string, arches []string, driverkit bool) ([]string, error) {
 
 	if runtime.GOOS == "windows" {
-		return fmt.Errorf("dyld extraction is not supported on Windows (see github.com/blacktop/go-apfs)")
+		return nil, fmt.Errorf("dyld extraction is not supported on Windows (see github.com/blacktop/go-apfs)")
 	}
 
 	i, err := info.Parse(ipsw)
 	if err != nil {
-		return fmt.Errorf("failed to parse IPSW: %v", err)
+		return nil, fmt.Errorf("failed to parse IPSW: %v", err)
 	}
 
 	dmgPath, err := i.GetSystemOsDmg()
 	if err != nil {
 		dmgPath, err = i.GetFileSystemOsDmg()
 		if err != nil {
-			return fmt.Errorf("failed to get File System DMG: %v", err)
+			return nil, fmt.Errorf("failed to get File System DMG: %v", err)
 		}
 	}
-	dmgs, err := utils.Unzip(ipsw, "", func(f *zip.File) bool {
-		return strings.EqualFold(filepath.Base(f.Name), dmgPath)
-	})
-	if err != nil {
-		return fmt.Errorf("failed to extract %s from IPSW: %v", dmgPath, err)
-	}
-	if len(dmgs) == 0 {
-		return fmt.Errorf("File System %s NOT found in IPSW", dmgPath)
-	}
-	defer os.Remove(dmgs[0])
 
-	return ExtractFromDMG(i, dmgs[0], destPath, arches)
+	// check if filesystem DMG already exists (due to previous mount command)
+	if _, err := os.Stat(dmgPath); os.IsNotExist(err) {
+		dmgs, err := utils.Unzip(ipsw, "", func(f *zip.File) bool {
+			return strings.EqualFold(filepath.Base(f.Name), dmgPath)
+		})
+		if err != nil {
+			return nil, fmt.Errorf("failed to extract %s from IPSW: %v", dmgPath, err)
+		}
+		if len(dmgs) == 0 {
+			return nil, fmt.Errorf("File System %s NOT found in IPSW", dmgPath)
+		}
+		defer os.Remove(dmgs[0])
+	}
+
+	return ExtractFromDMG(i, dmgPath, destPath, arches, driverkit)
 }
 
-func ExtractFromRemoteCryptex(zr *zip.Reader, destPath string, arches []string) error {
+func ExtractFromRemoteCryptex(zr *zip.Reader, destPath string, arches []string, driverkit bool) error {
 	found := false
 
 	for _, zf := range zr.File {
@@ -228,13 +245,7 @@ func ExtractFromRemoteCryptex(zr *zip.Reader, destPath string, arches []string) 
 				return fmt.Errorf("failed to parse info from cryptex-system-arm64e: %v", err)
 			}
 
-			folder, err := i.GetFolder()
-			if err != nil {
-				log.Errorf("failed to get folder from remote zip metadata: %v", err)
-			}
-			destPath = filepath.Join(destPath, folder)
-
-			if err := ExtractFromDMG(i, out.Name(), destPath, arches); err != nil {
+			if _, err := ExtractFromDMG(i, out.Name(), destPath, arches, driverkit); err != nil {
 				return fmt.Errorf("failed to extract dyld_shared_cache from cryptex-system-arm64e: %v", err)
 			}
 

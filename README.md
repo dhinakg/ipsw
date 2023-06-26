@@ -60,7 +60,9 @@ Usage:
   ipsw [command]
 
 Available Commands:
+  debugserver     Prep device for remote debugging
   device-list     List all iOS devices
+  diff            Diff IPSWs
   download        Download Apple Firmware files (and more)
   dtree           Parse DeviceTree
   dyld            Parse dyld_shared_cache
@@ -81,10 +83,11 @@ Available Commands:
   symbolicate     Symbolicate ARM 64-bit crash logs (similar to Apple's symbolicatecrash)
   update          Download an ipsw update if one exists
   version         Print the version number of ipsw
+  watch           Watch Github Commits
 
 Flags:
       --color           colorize output
-      --config string   config file (default is $HOME/.ipsw.yaml)
+      --config string   config file (default is $HOME/.config/ipsw/config.yaml)
   -h, --help            help for ipsw
   -V, --verbose         verbose output
 
@@ -93,7 +96,7 @@ Use "ipsw [command] --help" for more information about a command.
 
 ## Documentation
 
-- [https://blacktop.github.io/ipsw](https://blacktop.github.io/ipsw/docs/)
+- [https://blacktop.github.io/ipsw](https://blacktop.github.io/ipsw)
 
 ```mermaid
 graph TD
@@ -112,6 +115,7 @@ Here are ways to get in touch with the `ipsw` community:
 
 [![Join Discord](https://img.shields.io/badge/Join_our_Discord_server-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/xx2y9yrcgs)
 [![Follow Twitter](https://img.shields.io/badge/follow_on_twitter-1DA1F2?style=for-the-badge&logo=twitter&logoColor=white)](https://twitter.com/blacktop__)
+[![Follow Mastodon](https://img.shields.io/badge/follow_on_mastodon-6364FF?style=for-the-badge&logo=mastodon&logoColor=white)](https://mastodon.social/@blacktop)
 [![GitHub Discussions](https://img.shields.io/badge/GITHUB_DISCUSSION-181717?style=for-the-badge&logo=github&logoColor=white)](https://github.com/blacktop/ipsw/discussions)
 
 ## Credit
@@ -120,4 +124,4 @@ Big shout out to Jonathan Levin's amazing books and his legendary `jtool`
 
 ## License
 
-MIT Copyright (c) 2018-2022 **blacktop**
+MIT Copyright (c) 2018-2023 **blacktop**

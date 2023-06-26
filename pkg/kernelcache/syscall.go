@@ -49,7 +49,7 @@ const (
 func (r returnType) String() string {
 	switch r {
 	case RET_NONE:
-		return "none"
+		return "void"
 	case RET_INT_T:
 		return "int"
 	case RET_UINT_T:
@@ -81,27 +81,75 @@ type sysMaster struct {
 }
 
 type sysent struct {
-	Call       uint64     // implementing function
-	Munge      uint64     // system call arguments munger for 32-bit process
-	ReturnType returnType // system call return types
-	NArg       int16      // number of args
-	ArgBytes   uint16     // Total size of arguments in bytes for 32-bit system calls
+	Call       uint64     `json:"call,omitempty"`        // implementing function
+	Munge      uint64     `json:"munge,omitempty"`       // system call arguments munger for 32-bit process
+	ReturnType returnType `json:"return_type,omitempty"` // system call return types
+	NArg       int16      `json:"n_arg,omitempty"`       // number of args
+	ArgBytes   uint16     `json:"arg_bytes,omitempty"`   // Total size of arguments in bytes for 32-bit system calls
 }
 
 type Sysent struct {
-	Name   string
-	Number int
-	Proto  string
-	New    bool
+	Number int      `json:"number,omitempty"`
+	Name   string   `json:"name,omitempty"`
+	DBName string   `json:"old_name,omitempty"`
+	Args   []string `json:"args,omitempty"`
+	Proto  string   `json:"proto,omitempty"`
+	New    bool     `json:"new,omitempty"`
+	Old    bool     `json:"old,omitempty"`
 	sysent
 }
 
 func (s Sysent) String() string {
-	var isNew string
-	if s.New {
-		isNew = "(found 🆕 syscall)"
+	var args []string
+	var funcStr string
+	var extra string
+
+	if s.Name == "syscall" {
+		extra = colorAddr(" // indirect syscall")
 	}
-	return fmt.Sprintf("%d:\t%s\tcall=%#x\tmunge=%#x\tret=%s\tnarg=%d (bytes=%d)\t%s%s", s.Number, s.Name, s.Call, s.Munge, s.ReturnType, s.NArg, s.ArgBytes, s.Proto, isNew)
+	if s.Old {
+		s.Name = "nosys"
+		extra = colorAddr(fmt.Sprintf(" // old '%s'", s.DBName))
+	}
+
+	// get args
+	if len(s.Args) == 0 || (len(s.Args) == 1 && s.Args[0] == RET_NONE.String()) {
+		args = append(args, "void")
+	} else {
+		for _, arg := range s.Args {
+			parts := strings.Split(arg, " ")
+			if len(parts) == 2 {
+				args = append(args, fmt.Sprintf("%s %s", colorType(parts[0]), (parts[1])))
+			} else {
+				args = append(args, colorType(arg))
+			}
+		}
+	}
+
+	funcStr = fmt.Sprintf("%s %s(%s);%s", colorType(s.ReturnType.String()), colorName(s.Name), strings.Join(args, ", "), extra)
+
+	var isNew string
+	if s.New && s.Name != "nosys" && s.Name != "enosys" && s.Name != "syscall" {
+		isNew = colorBold(" << 👀 [found NEW syscall] 👀 >>")
+	}
+
+	if s.Name == "nosys" || s.Name == "enosys" || s.Name == "syscall" {
+		s.Name = colorAddr(s.Name)
+	} else {
+		s.Name = colorBold(s.Name)
+	}
+
+	return fmt.Sprintf(
+		"%d\t%s: %s\t%s=%#x\t%s=%s\t%s=%d\t%s=%d\t%s%s",
+		s.Number,
+		colorAddr("%#x", s.Call),
+		s.Name,
+		colorField("munge"), s.Munge,
+		colorField("ret"), s.ReturnType,
+		colorField("narg"), s.NArg,
+		colorField("bytes"), s.ArgBytes,
+		funcStr,
+		isNew)
 }
 
 func getSyscallData() (*SyscallData, error) {
@@ -112,8 +160,7 @@ func getSyscallData() (*SyscallData, error) {
 	}
 	defer gzr.Close()
 	// Decoding the serialized data
-	err = gob.NewDecoder(gzr).Decode(&sdata)
-	if err != nil {
+	if err = gob.NewDecoder(gzr).Decode(&sdata); err != nil {
 		return nil, fmt.Errorf("failed to decode syscall data; %v", err)
 	}
 	return &sdata, nil
@@ -122,17 +169,20 @@ func getSyscallData() (*SyscallData, error) {
 // GetSyscallTable returns a map of system call table as array of sysent structs
 func GetSyscallTable(m *macho.File) ([]Sysent, error) {
 	var syscalls []Sysent
-	var SYS_MAXSYSCALL int
+	var sysnoAddr uint64
+	var maxSyscall int
 
-	sdata, err := getSyscallData()
+	srcdata, err := getSyscallData()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get embedded syscall data: %v", err)
 	}
-	for k, v := range sdata.Names {
-		if v == "MAXSYSCALL" {
-			SYS_MAXSYSCALL = k
-		}
+
+	sdata, err := getSyscallsData()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get embedded syscall JSON data: %v", err)
 	}
+
+	maxSyscall = len(sdata.BsdSyscalls)
 
 	if m.FileTOC.FileHeader.Type == types.MH_FILESET {
 		var err error
@@ -148,7 +198,7 @@ func GetSyscallTable(m *macho.File) ([]Sysent, error) {
 			return nil, err
 		}
 
-		sysents := make([]sysent, SYS_MAXSYSCALL+20)
+		sysents := make([]sysent, maxSyscall+20)
 
 		pattern, err := hex.DecodeString(syscall2Pattern)
 		if err != nil {
@@ -157,34 +207,58 @@ func GetSyscallTable(m *macho.File) ([]Sysent, error) {
 
 		if found := bytes.Index(dat, pattern); found > 0 {
 			found -= (binary.Size(uint64(0)) * 5) // rewind to beginning of syscall table
-			log.Debugf("found at addr: %#x\n", sec.Addr+uint64(found))
+			log.WithField("bsd_syscall_table", fmt.Sprintf("%#x", sec.Addr+uint64(found))).Infof("Found")
+
 			if err := binary.Read(bytes.NewReader(dat[found:]), binary.LittleEndian, &sysents); err != nil {
 				return nil, fmt.Errorf("failed to read syscalls sysent data: %v", err)
 			}
+
 			// fixup syscall table call/munge addresses
 			for idx, sc := range sysents {
 				isNew := false
 				if sc.ReturnType > RET_UINT64_T || sc.ReturnType < RET_NONE {
 					break
 				}
-				if idx > SYS_MAXSYSCALL {
-					isNew = true
-				}
 				sysents[idx].Call = m.SlidePointer(sc.Call)
 				sysents[idx].Munge = m.SlidePointer(sc.Munge)
-				name := "enosys"
-				if n, ok := sdata.Names[idx]; ok {
-					name = n
+
+				var name string
+				if idx == 0 {
+					name = "syscall"
+					sysnoAddr = sc.Call
+				} else if sc.Call == sysnoAddr {
+					name = "nosys"
+				} else {
+					if sysents[idx].Munge == 0 &&
+						sysents[idx].ReturnType == RET_INT_T &&
+						sysents[idx].NArg == 0 &&
+						sysents[idx].ArgBytes == 0 {
+						name = "enosys"
+					} else {
+						name = unknownTrap
+					}
 				}
-				var proto string
-				if sm, ok := sdata.Table[idx]; ok {
-					proto = sm.NameAndArgs
+
+				// check if we have a name for this syscall in JSON data
+				sc, err := sdata.GetBsdSyscallByNumber(idx)
+				if err != nil { // not found
+					// check if we have a name for this syscall in xnu src
+					if n, ok := srcdata.Names[idx]; ok {
+						name = n
+					} else {
+						isNew = true
+					}
+				} else { // found
+					name = sc.Name
 				}
+
 				syscalls = append(syscalls, Sysent{
-					Name:   name,
 					Number: idx,
-					Proto:  proto,
+					Name:   name,
+					DBName: sc.Name,
+					Args:   sc.Arguments,
 					New:    isNew,
+					Old:    sc.Old,
 					sysent: sysents[idx],
 				})
 			}
@@ -237,7 +311,6 @@ func ParseSyscallFiles(output string) error {
 }
 
 func ParseSyscallHeader() (map[int]string, error) {
-
 	f, err := os.Open(syscallBetaHeader)
 	if err != nil {
 		ff, err := os.Open(syscallHeader)
@@ -246,9 +319,9 @@ func ParseSyscallHeader() (map[int]string, error) {
 		}
 		defer ff.Close()
 		f = ff
-		return nil, fmt.Errorf("failed to open syscall beta header: %v", err)
+	} else {
+		defer f.Close()
 	}
-	defer f.Close()
 
 	r := bufio.NewReader(f)
 

@@ -1,7 +1,7 @@
 //go:build darwin && frida
 
 /*
-Copyright © 2022 blacktop
+Copyright © 2018-2023 blacktop
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -27,6 +27,7 @@ import (
 	"bufio"
 	"context"
 	_ "embed"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -98,7 +99,8 @@ func init() {
 
 // fridaObjcCmd represents the frida command
 var fridaObjcCmd = &cobra.Command{
-	Use:           "frida",
+	Use:           "objc",
+	Aliases:       []string{"o"},
 	Short:         "Trace ObjC methods",
 	SilenceUsage:  true,
 	SilenceErrors: true,
@@ -273,7 +275,11 @@ var fridaObjcCmd = &cobra.Command{
 
 			return nil
 		}); err != nil {
-			log.Warn("Detaching Session...")
+			if errors.As(err, &ctrlc.ErrorCtrlC{}) {
+				log.Warn("Detaching Session...")
+			} else {
+				return err
+			}
 		}
 
 		return nil

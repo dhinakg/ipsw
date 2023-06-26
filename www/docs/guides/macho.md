@@ -10,7 +10,7 @@ Convert MachO address to offset
 
 ```bash
 ❯ ipsw macho a2o kernelcache 0xfffffff0070b4000
-   • Offset                    dec=720896 hex=0xb0000 section=__mod_init_func segment=__DATA_CONST
+   • Offset     dec=720896 hex=0xb0000 section=__mod_init_func segment=__DATA_CONST
 ```
 
 ### **macho o2a**
@@ -19,7 +19,7 @@ Convert MachO offset to address
 
 ```bash
 ❯ ipsw macho o2a kernelcache 0x007dc000
-   • Address                   dec=18446744005115772928 hex=0xfffffff0077e0000 section=__data segment=__DATA
+   • Address    dec=18446744005115772928 hex=0xfffffff0077e0000 section=__data segment=__DATA
 ```
 
 ### **macho lipo**
@@ -32,7 +32,9 @@ Extract file from Universal/FAT MachO
 • Extracted ARM64e file as debugserver.arm64e
 ```
 
-> **NOTE:** you can supply `--arch arm64e` instead of using the arch picker UI
+:::info note
+You can supply `--arch arm64e` instead of using the arch picker UI
+:::
 
 ### **macho bbl**
 
@@ -44,17 +46,10 @@ Create single universal/fat MachO out many MachOs
 
 ### **macho dump**
 
-First print the MachO header for `kernelcache`
-
-```bash
-❯ ipsw macho info kernelcache | grep __DATA_CONST.__mod_init_func
-        sz=0x00000290 off=0x000b0000-0x000b0290 addr=0xfffffff0070b4000-0xfffffff0070b4290              __DATA_CONST.__mod_init_func     (ModInitFuncPointers)
-```
-
 Hexdump the section `__DATA_CONST.__mod_init_func`
 
 ```bash
-❯ ipsw dyld dump kernelcache 0xfffffff0070b4000 --size 656 # 0x290 in decimal
+❯ ipsw dyld dump kernelcache --section __DATA_CONST.__mod_init_func --size 656 # 0x290 in decimal
 
 00000000  34 ba 69 07 f0 ff ff ff  0c c2 69 07 f0 ff ff ff  |4.i.......i.....|
 00000010  98 e5 69 07 f0 ff ff ff  18 fc 69 07 f0 ff ff ff  |..i.......i.....|
@@ -78,7 +73,7 @@ Hexdump the section `__DATA_CONST.__mod_init_func`
 Or dump the section as a list of pointers
 
 ```bash
-❯ ipsw macho dump kernelcache 0xfffffff0070b4000 --addr --count 10
+❯ ipsw macho dump kernelcache --section __DATA_CONST.__mod_init_func --addr --count 10
 
 0xfffffff00769ba34
 0xfffffff00769c20c
@@ -95,12 +90,12 @@ Or dump the section as a list of pointers
 Or write to a file for later post-processing
 
 ```bash
-❯ ipsw macho dump kernelcache 0xfffffff0070b4000 --size 656 --output ./data.bin
-   • Wrote data to file ./data.bin
+❯ ipsw macho dump kernelcache --section __DATA_CONST.__mod_init_func --size 656 --output mod_init_func.bin
+   • Wrote data to file mod_init_func.bin
 ```
 
 ```bash
-❯ hexdump -C data.bin
+❯ hexdump -C mod_init_func.bin
 00000000  34 ba 69 07 f0 ff ff ff  0c c2 69 07 f0 ff ff ff  |4.i.......i.....|
 00000010  98 e5 69 07 f0 ff ff ff  18 fc 69 07 f0 ff ff ff  |..i.......i.....|
 00000020  b8 05 6a 07 f0 ff ff ff  b0 0d 6a 07 f0 ff ff ff  |..j.......j.....|
@@ -118,29 +113,39 @@ Help for macho cmd
 ```bash
 ❯ ipsw macho info --help
 
-Parse a MachO file
+Explore a MachO file
 
 Usage:
   ipsw macho info <macho> [flags]
 
+Aliases:
+  info, i
+
 Flags:
+  -z, --all-fileset-entries     Parse all fileset entries
   -a, --arch string             Which architecture to use for fat/universal MachO
+  -b, --bit-code                Dump the LLVM bitcode
+      --dump-cert               Dump the certificate
   -e, --ent                     Print entitlements
   -x, --extract-fileset-entry   Extract the fileset entry
   -t, --fileset-entry string    Which fileset entry to analyze
   -u, --fixups                  Print fixup chains
   -d, --header                  Print the mach header
-  -h, --help                    help for macho
+  -h, --help                    help for info
+  -j, --json                    Print the TOC as JSON
   -l, --loads                   Print the load commands
   -o, --objc                    Print ObjC info
   -r, --objc-refs               Print ObjC references
+      --output string           Directory to extract files to
   -s, --sig                     Print code signature
+  -g, --split-seg               Print split seg info
   -f, --starts                  Print function starts
   -c, --strings                 Print cstrings
   -n, --symbols                 Print symbols
 
 Global Flags:
-      --config string   config file (default is $HOME/.ipsw.yaml)
+      --color           colorize output
+      --config string   config file (default is $HOME/.ipsw/config.yaml)
   -V, --verbose         verbose output
 ```
 
@@ -235,6 +240,47 @@ Flags         = NoUndefs, DyldLink, TwoLevel, BindsToWeak, NoReexportedDylibs, A
 24: LC_DATA_IN_CODE             offset=0x0102ba28-0x0102ba28, size=    0, entries=0
 ```
 
+### **macho info --json**
+
+Output the same information as `macho info --header --loads` but output as JSON
+
+```bash
+❯ ipsw macho info JavaScriptCore --json | jq . -C | less -Sr
+```
+```json
+{
+  "header": {
+    "magic": "64-bit MachO",
+    "type": "DYLIB",
+    "cpu": "AARCH64, ARM64e caps: USR00",
+    "commands": 24,
+    "commands_size": 4736,
+    "flags": [
+      "NoUndefs",
+      "DyldLink",
+      "TwoLevel",
+      "BindsToWeak",
+      "NoReexportedDylibs",
+      "AppExtensionSafe",
+      "DylibInCache"
+    ]
+  },
+  "loads": [
+    {
+      "load_cmd": "LC_SEGMENT_64",
+      "len": 1112,
+      "name": "__TEXT",
+      "addr": 6885064704,
+      "memsz": 21749760,
+      "offset": 376832,
+      "filesz": 21749760,
+      "maxprot": "r-x",
+      "prot": "r-x",
+      "nsect": 13,
+      "sections":
+<SNIP>              
+```
+
 ### **macho info --sig**
 
 Similar to `jtool --sig`
@@ -269,7 +315,9 @@ CMS (RFC3852) signature:
         OU: Apple Certification Authority CN: Software Signing                           (2013-04-12 thru 2021-04-12)
 ```
 
-> **NOTE:** If you supply the `-V` flag, the output will be VERY similar to that of `openssl`
+:::info note
+If you supply the `-V` flag, the output will be VERY similar to that of `openssl`
+:::
 
 ### **macho info --dump-cert**
 
@@ -333,13 +381,15 @@ Similar to `jtool --ent`
 
 Similar to `objdump --macho --objc-meta-data` OR `dsdump --objc -vv`
 
-**NOTE:** Currently only supports _64-bit_ architechtures
+:::info note
+Currently only supports _64-bit_ architechtures
+:::
 
 ```bash
 ❯ ipsw macho info /usr/lib/libobjc.A.dylib --arch amd64 --objc | bat -l m
 ```
 
-```m
+```objc
 Objective-C
 ===========
 
@@ -811,12 +861,110 @@ Flags         = NoUndefs, DyldLink, TwoLevel, DylibInCache
 -rw-r--r--  1 blacktop    96M Apr 29 21:56 kernelcache.production
 ```
 
+### **macho info --split-seg**
+
+Dump the `LC_SEGMENT_SPLIT_INFO` of a KDK Kext
+
+```bash
+❯ ipsw macho info --arch arm64e --split-seg \
+IOFireWireSerialBusProtocolSansPhysicalUnit.kext/Contents/MacOS/IOFireWireSerialBusProtocolSansPhysicalUnit
+```
+```bash
+     __TEXT_EXEC.__text           0x0000400c  =>            __TEXT.__cstring        0x000005c8	kind(arm64_adrp)
+     __TEXT_EXEC.__text           0x0000412c  =>            __TEXT.__cstring        0x000005c8	kind(arm64_adrp)
+     __TEXT_EXEC.__text           0x00004464  =>            __TEXT.__cstring        0x000005c8	kind(arm64_adrp)
+     __TEXT_EXEC.__text           0x00004010  =>            __TEXT.__cstring        0x000005c8	kind(arm64_off_12)
+     __TEXT_EXEC.__text           0x00004130  =>            __TEXT.__cstring        0x000005c8	kind(arm64_off_12)
+     __TEXT_EXEC.__text           0x00004468  =>            __TEXT.__cstring        0x000005c8	kind(arm64_off_12)
+     __TEXT_EXEC.__text           0x00004300  =>            __TEXT.__cstring        0x0000066d	kind(arm64_adrp)
+     __TEXT_EXEC.__text           0x00004304  =>            __TEXT.__cstring        0x0000066d	kind(arm64_off_12)
+     __TEXT_EXEC.__text           0x000040fc  =>       __TEXT_EXEC.__auth_stubs     0x0000451c	kind(arm64_br_26)
+     __TEXT_EXEC.__text           0x00004110  =>       __TEXT_EXEC.__auth_stubs     0x0000451c	kind(arm64_br_26)
+     __TEXT_EXEC.__text           0x00004184  =>       __TEXT_EXEC.__auth_stubs     0x0000452c	kind(arm64_br_26)
+     __TEXT_EXEC.__text           0x000041dc  =>       __TEXT_EXEC.__auth_stubs     0x0000452c	kind(arm64_br_26)
+     __TEXT_EXEC.__text           0x00004020  =>       __TEXT_EXEC.__auth_stubs     0x0000453c	kind(arm64_br_26)
+     __TEXT_EXEC.__text           0x00004140  =>       __TEXT_EXEC.__auth_stubs     0x0000453c	kind(arm64_br_26)
+     __TEXT_EXEC.__text           0x00004478  =>       __TEXT_EXEC.__auth_stubs     0x0000453c	kind(arm64_br_26)
+     __TEXT_EXEC.__text           0x00004048  =>       __TEXT_EXEC.__auth_stubs     0x0000454c	kind(arm64_br_26)
+<SNIP>     
+```       
+
+### **macho info --bit-code**
+
+Extract the LLVM bitcode from a MachO exported from iOS archive file
+
+```bash
+❯ ipsw macho info --bit-code <MACHO> --output /tmp/bc
+```
+```bash
+LLVM Bitcode:
+  Name:      Ld
+  Version:   1.0
+  Platform:  iOS
+  Arch:      arm64
+  SDK:       15.5
+  Hide Syms: 1
+  Linker Options:
+    -execute
+    -platform_version ios 15.5 15.5
+    -e _main
+    -rpath @executable_path/Frameworks
+    -executable_path /Users/blacktop/Library/Developer/Xcode/DerivedData/App-gteiirrrrrixcmdujgfktocqukjq/Build/Intermediates.noindex/ArchiveIntermediates/App/InstallationBuildProductsLocation/Applications/App.app/App
+    -dead_strip
+  Dylibs:
+    {SDKPATH}/System/Library/Frameworks/Foundation.framework/Foundation
+    {SDKPATH}/usr/lib/libobjc.A.dylib
+    {SDKPATH}/usr/lib/libSystem.B.dylib
+    {SDKPATH}/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation
+    {SDKPATH}/System/Library/Frameworks/UIKit.framework/UIKit
+
+   • Bitcode: -cc1 -triple arm64-apple-ios15.5.0 -emit-obj --mrelax-relocations -disable-llvm-passes -target-sdk-version=15.5 -fvisibility-inlines-hidden-static-local-var -fno-rounding-math -target-abi darwinpcs -Os
+      • Extracting /tmp/bc/5.bc
+   • Bitcode: -cc1 -triple arm64-apple-ios15.5.0 -emit-obj --mrelax-relocations -disable-llvm-passes -target-sdk-version=15.5 -fvisibility-inlines-hidden-static-local-var -fno-rounding-math -target-abi darwinpcs -Os
+      • Extracting /tmp/bc/4.bc
+   • Bitcode: -cc1 -triple arm64-apple-ios15.5.0 -emit-obj --mrelax-relocations -disable-llvm-passes -target-sdk-version=15.5 -fvisibility-inlines-hidden-static-local-var -fno-rounding-math -target-abi darwinpcs -Os
+      • Extracting /tmp/bc/3.bc
+   • Bitcode: -cc1 -triple arm64-apple-ios15.5.0 -emit-obj --mrelax-relocations -disable-llvm-passes -target-sdk-version=15.5 -fvisibility-inlines-hidden-static-local-var -fno-rounding-math -target-abi darwinpcs -Os
+      • Extracting /tmp/bc/2.bc
+   • Bitcode: -cc1 -triple arm64-apple-ios15.5.0 -emit-obj --mrelax-relocations -disable-llvm-passes -target-sdk-version=15.5 -fvisibility-inlines-hidden-static-local-var -fno-rounding-math -target-abi darwinpcs -Os
+      • Extracting /tmp/bc/1.bc
+```
+
+Now to get LLVM IR disassembly from the bitcode files:
+
+```bash
+❯ llvm-dis /tmp/*.bc
+```
+
+```bash
+❯ ls /tmp/bc
+1.bc 1.ll 2.bc 2.ll 3.bc 3.ll 4.bc 4.ll 5.bc 5.ll
+```
+
+Take a look at the output
+
+```bash
+❯ cat /tmp/bc/1.ll
+```
+```llvm
+; ModuleID = '/tmp/bc/1.bc'
+target datalayout = "e-m:o-i64:64-i128:128-n32:64-S128"
+target triple = "arm64-apple-ios15.5.0"
+
+%0 = type opaque
+%1 = type opaque
+%"__ir_hidden#19_" = type { i32*, i32, i8*, i64 }
+%"__ir_hidden#20_" = type opaque
+%"__ir_hidden#21_" = type { %"__ir_hidden#21_"*, %"__ir_hidden#21_"*, %"__ir_hidden#20_"*, i8* (i8*, i8*)**, %"__ir_hidden#22_"* }
+%"__ir_hidden#22_" = type { i32, i32, i32, i8*, i8*, %"__ir_hidden#23_"*, %"__ir_hidden#25_"*, %"__ir_hidden#27_"*, i8*, %"__ir_hidden#29_"* }
+```
+
 ### **macho disass**
 
 Disassemble ARMv9 binaries
 
 ```bash
-❯ ipsw disass --vaddr 0xfffffff007b7c05c kernelcache.release.iphone12.decompressed
+❯ ipsw macho disass --vaddr 0xfffffff007b7c05c kernelcache.release.iphone12.decompressed
 ```
 
 ```
@@ -846,13 +994,13 @@ Disassemble ARMv9 binaries
 You can also dissassemble a function by name
 
 ```bash
-❯ ipsw disass --symbol <SYMBOL_NAME> --instrs 200 JavaScriptCore
+❯ ipsw macho disass --symbol <SYMBOL_NAME> --instrs 200 JavaScriptCore
 ```
 
 Make it pretty 💄🐷 using `--color` flag
 
 ```bash
-❯ ipsw disass --vaddr 0xFFFFFFF007B44000 kernelcache.release.iphone13.decompressed --color
+❯ ipsw macho disass --vaddr 0xFFFFFFF007B44000 kernelcache.release.iphone13.decompressed --color
 ```
 
 ```armasm
@@ -884,7 +1032,7 @@ func_fffffff007b44034:
 Demangle C++ names
 
 ```bash
-❯ ipsw disass --demangle --symbol <SYMBOL_NAME> --instrs 200 JavaScriptCore --color
+❯ ipsw macho disass --demangle --symbol <SYMBOL_NAME> --instrs 200 JavaScriptCore --color
 ```
 
 ### **macho patch**
@@ -914,4 +1062,66 @@ Check the signature
 ❯ codesign --verify --deep --strict --verbose=4 /tmp/ls
 /tmp/ls: valid on disk
 /tmp/ls: satisfies its Designated Requirement
+```
+
+### **macho search**
+
+Search for MachOs that have split segments
+
+```bash
+❯ ipsw macho search --ipsw iPhone15,2_16.3_20D47_Restore.ipsw --load-command 'LC_SEGMENT_SPLIT_INFO'
+   • Scanning filesystem
+/System/DriverKit/usr/lib/libSystem_debug.dylib	load=LC_SEGMENT_SPLIT_INFO
+/System/DriverKit/usr/lib/system/libdispatch_debug.dylib	load=LC_SEGMENT_SPLIT_INFO
+/System/DriverKit/usr/lib/system/libdispatch_profile.dylib	load=LC_SEGMENT_SPLIT_INFO
+/System/DriverKit/usr/lib/system/libsystem_blocks_debug.dylib	load=LC_SEGMENT_SPLIT_INFO
+/System/DriverKit/usr/lib/system/libsystem_blocks_profile.dylib	load=LC_SEGMENT_SPLIT_INFO
+/System/DriverKit/usr/lib/system/libsystem_c_debug.dylib	load=LC_SEGMENT_SPLIT_INFO
+/System/DriverKit/usr/lib/system/libsystem_malloc_debug.dylib	load=LC_SEGMENT_SPLIT_INFO
+/System/DriverKit/usr/lib/system/libsystem_platform_debug.dylib	load=LC_SEGMENT_SPLIT_INFO
+/System/DriverKit/usr/lib/system/libsystem_pthread_debug.dylib	load=LC_SEGMENT_SPLIT_INFO
+/System/DriverKit/usr/lib/system/libsystem_trace_debug.dylib	load=LC_SEGMENT_SPLIT_INFO
+/System/Library/Extensions/ASIOKit.kext/ASIOKit	load=LC_SEGMENT_SPLIT_INFO
+/System/Library/Extensions/AppleGameControllerPersonality.kext/AppleGameControllerPersonality	load=LC_SEGMENT_SPLIT_INFO
+/System/Library/Extensions/AppleUserConsent.kext/AppleUserConsent	load=LC_SEGMENT_SPLIT_INFO
+/System/Library/Extensions/AppleUserConsent.kext/AppleUserConsent_development	load=LC_SEGMENT_SPLIT_INFO
+/System/Library/Extensions/lifs.kext/lifs	load=LC_SEGMENT_SPLIT_INFO
+/System/Library/PrivateFrameworks/iWorkImport.framework/iWorkImport	load=LC_SEGMENT_SPLIT_INFO
+/usr/lib/dyld	load=LC_SEGMENT_SPLIT_INFO
+/usr/lib/system/introspection/libdispatch.dylib	load=LC_SEGMENT_SPLIT_INFO
+   • Scanning SystemOS
+/System/Library/PrivateFrameworks/VisualTestKit.framework/VisualTestKit	load=LC_SEGMENT_SPLIT_INFO
+/usr/lib/libstdc++.6.0.9.dylib	load=LC_SEGMENT_SPLIT_INFO
+/usr/lib/libstdc++.6.dylib	load=LC_SEGMENT_SPLIT_INFO
+/usr/lib/libstdc++.dylib	load=LC_SEGMENT_SPLIT_INFO
+   • Scanning AppOS
+```
+
+Search for MachOs that impliment an ObjC protocol
+
+```bash 
+❯ ipsw macho search --ipsw iPhone15,2_16.3_20D47_Restore.ipsw --protocol 'NSObject'
+
+   • Scanning filesystem
+/Applications/AAUIViewService.app/AAUIViewService	protocol=NSObject
+/Applications/AMSEngagementViewService.app/AMSEngagementViewService	protocol=NSObject
+/Applications/AXRemoteViewService.app/AXRemoteViewService	protocol=NSObject
+/Applications/AXUIViewService.app/AXUIViewService	protocol=NSObject
+/Applications/AccountAuthenticationDialog.app/AccountAuthenticationDialog	protocol=NSObject
+/Applications/ActivityMessagesApp.app/PlugIns/ActivityMessagesExtension.appex/ActivityMessagesExtension	protocol=NSObject
+/Applications/AirDropUI.app/AirDropUI	protocol=NSObject
+/Applications/AirPlayReceiver.app/AirPlayReceiver	protocol=NSObject
+/Applications/AnimojiStickers.app/AnimojiStickers	protocol=NSObject
+/Applications/AnimojiStickers.app/PlugIns/AnimojiStickersExtension.appex/AnimojiStickersExtension	protocol=NSObject
+/Applications/AppSSOUIService.app/AppSSOUIService	protocol=NSObject
+/Applications/AppStore.app/AppStore	protocol=NSObject
+/Applications/AppStore.app/PlugIns/AppStoreWidgetsExtension.appex/AppStoreWidgetsExtension	protocol=NSObject
+/Applications/AppStore.app/PlugIns/ProductPageExtension.appex/ProductPageExtension	protocol=NSObject
+/Applications/AppStore.app/PlugIns/SubscribePageExtension.appex/SubscribePageExtension	protocol=NSObject
+/Applications/Apple TV Remote.app/Apple TV Remote	protocol=NSObject
+/Applications/Apple TV Remote.app/PlugIns/TVRemoteIntentExtension.appex/TVRemoteIntentExtension	protocol=NSObject
+/Applications/AskPermissionUI.app/AskPermissionUI	protocol=NSObject
+/Applications/AuthKitUIService.app/AuthKitUIService	protocol=NSObject
+/Applications/AuthenticationServicesUI.app/AuthenticationServicesUI	protocol=NSObject
+<SNIP>
 ```

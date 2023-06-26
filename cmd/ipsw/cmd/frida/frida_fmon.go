@@ -1,5 +1,5 @@
 /*
-Copyright © 2022 blacktop
+Copyright © 2018-2023 blacktop
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -41,6 +41,7 @@ func init() {
 // fridaFMonCmd represents the fmon command
 var fridaFMonCmd = &cobra.Command{
 	Use:           "fmon",
+	Aliases:       []string{"fm"},
 	Short:         "File Monitor",
 	SilenceUsage:  true,
 	SilenceErrors: true,

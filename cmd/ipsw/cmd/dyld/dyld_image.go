@@ -1,5 +1,5 @@
 /*
-Copyright © 2022 blacktop
+Copyright © 2018-2023 blacktop
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -41,6 +41,7 @@ func init() {
 // imageCmd represents the image command
 var ImageCmd = &cobra.Command{
 	Use:           "image <dyld_shared_cache> <IMAGE>",
+	Aliases:       []string{"img"},
 	Short:         "Dump image array info",
 	Args:          cobra.MinimumNArgs(1),
 	SilenceUsage:  true,

@@ -1,5 +1,5 @@
 /*
-Copyright © 2018-2022 blacktop
+Copyright © 2018-2023 blacktop
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -61,8 +61,9 @@ func init() {
 
 // rssCmd represents the rss command
 var rssCmd = &cobra.Command{
-	Use:   "rss",
-	Short: "Read Releases - Apple Developer RSS Feed",
+	Use:     "rss",
+	Aliases: []string{"r"},
+	Short:   "Read Releases - Apple Developer RSS Feed",
 	Run: func(cmd *cobra.Command, args []string) {
 		var releases []string
 

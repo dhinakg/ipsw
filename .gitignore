@@ -4,6 +4,7 @@
 *.dll
 *.so
 *.dylib
+*.a
 
 # Test binary, build with `go test -c`
 *.test
@@ -22,7 +23,6 @@ __debug_bin
 *.zip
 *.im4p
 *_Restore
-System
 usr
 *.xz
 *.bin
@@ -50,6 +50,8 @@ www/docs/static/releases*.json
 *.unstripped
 *.bndb
 *.lock
+internal/commands/ida/dscu/data/dscu.py
+venv/
 
 # Unicorn EMU
 unicorn2/
