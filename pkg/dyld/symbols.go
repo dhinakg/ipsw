@@ -98,7 +98,7 @@ func (s Symbol) String(color bool) string {
 func (f *File) ParseLocalSyms(dump bool) error {
 	for _, image := range f.Images {
 		if err := image.ParseLocalSymbols(dump); err != nil {
-			if errors.Is(err, dyld.ErrNoLocals) {
+			if errors.Is(err, ErrNoLocals) {
 				utils.Indent(log.Warn, 2)(err.Error())
 			} else {
 				return err
