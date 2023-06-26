@@ -164,4 +164,4 @@ jobs:
       - uses: actions/upload-artifact@v3
         with:
           name: Releases
-          path: ipsw
+          path: /usr/local/bin/ipsw
